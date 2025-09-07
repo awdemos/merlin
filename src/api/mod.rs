@@ -1,0 +1,4 @@
+// src/api/mod.rs
+pub mod model_select;
+
+pub use model_select::*;
