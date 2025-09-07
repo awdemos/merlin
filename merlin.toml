@@ -1,0 +1,27 @@
+# Merlin Configuration Example
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[providers.openai]
+enabled = false
+api_key = "sk-your-openai-key-here"
+model = "gpt-4-turbo"
+base_url = "https://api.openai.com/v1"
+
+[providers.ollama] 
+enabled = true
+endpoint = "http://localhost:11434"
+model = "llama2"
+
+[routing]
+policy = "epsilon_greedy"  # or "thompson_sampling"
+epsilon = 0.15
+
+[metrics]
+redis_url = "redis://127.0.0.1:6379"
+
+[telemetry]
+prometheus_port = 9090
+jaeger_endpoint = "http://localhost:14268/api/traces"

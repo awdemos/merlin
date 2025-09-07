@@ -1,0 +1,294 @@
+
+Repository Documentation
+This document provides a comprehensive overview of the repository's structure and contents.
+The first section, titled 'Directory/File Tree', displays the repository's hierarchy in a tree format.
+In this section, directories and files are listed using tree branches to indicate their structure and relationships.
+Following the tree representation, the 'File Content' section details the contents of each file in the repository.
+Each file's content is introduced with a '[File Begins]' marker followed by the file's relative path,
+and the content is displayed verbatim. The end of each file's content is marked with a '[File Ends]' marker.
+This format ensures a clear and orderly presentation of both the structure and the detailed contents of the repository.
+
+Directory/File Tree Begins -->
+
+merlin/
+├── Cargo.toml
+├── README.md
+└── src
+    ├── lib.rs
+    ├── metrics
+    │   └── mod.rs
+    ├── providers
+    │   ├── mod.rs
+    │   └── openai.rs
+    ├── routing
+    │   └── mod.rs
+    └── server.rs
+
+<-- Directory/File Tree Ends
+
+File Content Begin -->
+[File Begins] Cargo.toml
+[package]
+name = "merlin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full", "rt-multi-thread"] }
+reqwest = { version = "0.11", features = ["json"] }
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"  # Add this
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+tower = "0.4"
+prometheus = "0.13"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
+rand = "0.8"
+chrono = "0.4"  # Added for timestamp handling
+
+[dev-dependencies]
+mockall = "0.11"
+
+[File Ends] Cargo.toml
+
+[File Begins] README.md
+# 🧙‍♂️ Merlin: The AI Routing Wizard  
+*Intelligent multi-provider LLM routing intended for RegicideOS*  
+
+## Overview  
+Merlin is a AI router that intelligently selects optimal language models based on real-time performance metrics. Built for developers who demand reliability and efficiency in their AI workflows.
+
+## Features  
+✨ **Multi-Provider Support**: OpenAI, Anthropic, Gemini, local GGUF  
+🎯 **Smart Routing**: Epsilon-greedy & Thompson sampling algorithms  
+⚡️ **Real-Time Metrics**: Latency, cost, and quality tracking  
+🔮 **Quality Judging**: On-device GPT-2 reward modeling  
+📊 **Observability**: Tracing, Prometheus metrics, Grafana dashboards  
+
+## Quick Start  
+```bash
+# Clone the repository
+git clone https://github.com/regicideos/merlin.git
+cd merlin
+
+# Build and run
+cargo build --release
+./target/release/merlin serve --config ./merlin.toml
+```
+
+## Configuration Example  
+```toml
+[providers]
+openai = { api_key = "sk-...", model = "gpt-4-turbo" }
+anthropic = { api_key = "sk-ant-", model = "claude-3-opus" }
+
+[routing]
+policy = "thompson_sampling"
+exploration_rate = 0.15
+
+[telemetry]
+prometheus_port = 9090
+jaeger_endpoint = "http://localhost:14268/api/traces"
+```
+
+## Performance Dashboard  
+![Merlin Metrics](https://via.placeholder.com/600x300?text=Merlin+Performance+Dashboard)
+
+## Contributing  
+We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License  
+**GPL v3 License**  
+Copyright © 2025 RegicideOS Project  
+
+This program is free software: you can redistribute it and/or modify  
+it under the terms of the GNU General Public License as published by  
+the Free Software Foundation, either version 3 of the License, or  
+(at your option) any later version.  
+
+This program is distributed in the hope that it will be useful,  
+but WITHOUT ANY WARRANTY; without even the implied warranty of  
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the  
+GNU General Public License for more details.  
+
+You should have received a copy of the GNU General Public License  
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+[File Ends] README.md
+
+  [File Begins] src/lib.rs
+  mod metrics;
+  mod providers;
+  mod routing;
+  
+  pub use providers::LlmProvider;
+  pub use providers::OpenAIProvider;
+  pub use routing::RoutingPolicy;
+  pub use metrics::MetricCollector;
+  
+  pub struct Router<P: LlmProvider> {
+      providers: Vec<P>,
+      policy: RoutingPolicy,
+      metrics: MetricCollector,
+  }
+  
+  impl<P: LlmProvider> Router<P> {
+      pub async fn new(providers: Vec<P>, policy: RoutingPolicy) -> Self {
+          let metrics = MetricCollector::connect().await.expect("Redis connection failed");
+          Router { providers, policy, metrics }
+      }
+      
+      pub async fn route(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
+          let selected_provider = self.select_provider().await;
+          let result = selected_provider.chat(prompt).await?;
+          self.metrics.record_success(selected_provider.name(), result.len()).await;
+          Ok(result)
+      }
+      
+      async fn select_provider(&self) -> &P {
+          // Implementation would go here
+          &self.providers[0]
+      }
+  }
+
+  [File Ends] src/lib.rs
+
+    [File Begins] src/metrics/mod.rs
+    // src/metrics/mod.rs
+    use redis::AsyncCommands;
+    use std::time::Duration;
+    
+    pub struct MetricCollector {
+        conn: redis::aio::MultiplexedConnection,
+    }
+    
+    impl MetricCollector {
+        pub async fn connect() -> redis::RedisResult<Self> {
+            let client = redis::Client::open("redis://127.0.0.1/")?;
+            let conn = client.get_multiplexed_async_connection().await?;
+            Ok(MetricCollector { conn })
+        }
+        
+        pub async fn record_success(&mut self, provider: &str, token_count: usize) {
+            let key = format!("metrics:{}:success", provider);
+            self.conn.incr(key, 1).await.unwrap();
+            
+            let latency_key = format!("metrics:{}:tokens", provider);
+            self.conn.zadd(latency_key, token_count as i32, chrono::Utc::now().timestamp()).await.unwrap();
+        }
+    }
+
+    [File Ends] src/metrics/mod.rs
+
+    [File Begins] src/providers/mod.rs
+    pub mod openai;
+    
+    pub trait LlmProvider: Send + Sync {
+        async fn chat(&self, prompt: &str) -> anyhow::Result<String>;
+        fn name(&self) -> &'static str;
+    }
+    
+    pub use openai::OpenAiProvider;
+
+    [File Ends] src/providers/mod.rs
+
+    [File Begins] src/providers/openai.rs
+    // src/providers/openai.rs
+    use reqwest::Client;
+    use serde_json::Value;
+    use async_trait::async_trait;
+    use crate::LlmProvider;
+    
+    pub struct OpenAiProvider {
+        client: Client,
+        api_key: String,
+        model: String,
+    }
+    
+    #[async_trait]
+    impl LlmProvider for OpenAiProvider {
+        async fn chat(&self, prompt: &str) -> anyhow::Result<String> {
+            let resp = self.client.post("https://api.openai.com/v1/chat/completions")
+                .bearer_auth(&self.api_key)
+                .json(&serde_json::json!({
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}]
+                }))
+                .send()
+                .await?
+                .json::<Value>()
+                .await?;
+            
+            Ok(resp["choices"][0]["message"]["content"].as_str().unwrap().into())
+        }
+    }
+
+    [File Ends] src/providers/openai.rs
+
+    [File Begins] src/routing/mod.rs
+    use rand::Rng;
+    
+    pub enum RoutingPolicy {
+        EpsilonGreedy { epsilon: f64 },
+        ThompsonSampling,
+    }
+    
+    impl RoutingPolicy {
+        pub fn select_index(&self, num_providers: usize) -> usize {
+            match self {
+                RoutingPolicy::EpsilonGreedy { epsilon } => {
+                    if rand::thread_rng().gen_bool(*epsilon) {
+                        rand::thread_rng().gen_range(0..num_providers)
+                    } else {
+                        0 // Default to first provider for now
+                    }
+                }
+                RoutingPolicy::ThompsonSampling => todo!(),
+            }
+        }
+    }
+
+    [File Ends] src/routing/mod.rs
+
+  [File Begins] src/server.rs
+  use axum::{
+      extract::Query,
+      http::StatusCode,
+      response::sse::Event,
+      routing::get,
+      Router,
+  };
+  use futures::stream;
+  use tokio_stream::StreamExt;
+  
+  pub fn create_router<P: LlmProvider>(router: Router<P>) -> Router {
+      Router::new()
+          .route("/chat", get(handle_chat))
+          .with_state(router)
+  }
+  
+  async fn handle_chat<P: LlmProvider>(
+      Query(params): Query<HashMap<String, String>>,
+      State(router): State<Router<P>>,
+  ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+      let prompt = params.get("prompt").cloned().unwrap_or_default();
+      let max_tokens = params.get("max_tokens").and_then(|s| s.parse().ok()).unwrap_or(100);
+      
+      let stream = stream::once(async move {
+          match router.route(&prompt, max_tokens).await {
+              Ok(response) => Event::default().data(response),
+              Err(e) => Event::default().data(format!("Error: {}", e)),
+          }
+      });
+      
+      Sse::new(stream)
+  }
+
+  [File Ends] src/server.rs
+
+
+<-- File Content Ends
+
