@@ -1,0 +1,61 @@
+# 🧙‍♂️ Merlin: The AI Routing Wizard  
+*Intelligent multi-provider LLM routing intended for RegicideOS*  
+
+## Overview  
+Merlin is a AI router that intelligently selects optimal language models based on real-time performance metrics. Built for developers who demand reliability and efficiency in their AI workflows.
+
+## Features  
+✨ **Multi-Provider Support**: OpenAI, Anthropic, Gemini, local GGUF  
+🎯 **Smart Routing**: Epsilon-greedy & Thompson sampling algorithms  
+⚡️ **Real-Time Metrics**: Latency, cost, and quality tracking  
+🔮 **Quality Judging**: On-device GPT-2 reward modeling  
+📊 **Observability**: Tracing, Prometheus metrics, Grafana dashboards  
+
+## Quick Start  
+```bash
+# Clone the repository
+git clone https://github.com/regicideos/merlin.git
+cd merlin
+
+# Build and run
+cargo build --release
+./target/release/merlin serve --config ./merlin.toml
+```
+
+## Configuration Example  
+```toml
+[providers]
+openai = { api_key = "sk-...", model = "gpt-4-turbo" }
+anthropic = { api_key = "sk-ant-", model = "claude-3-opus" }
+
+[routing]
+policy = "thompson_sampling"
+exploration_rate = 0.15
+
+[telemetry]
+prometheus_port = 9090
+jaeger_endpoint = "http://localhost:14268/api/traces"
+```
+
+## Performance Dashboard  
+![Merlin Metrics](https://via.placeholder.com/600x300?text=Merlin+Performance+Dashboard)
+
+## Contributing  
+We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License  
+**GPL v3 License**  
+Copyright © 2025 RegicideOS Project  
+
+This program is free software: you can redistribute it and/or modify  
+it under the terms of the GNU General Public License as published by  
+the Free Software Foundation, either version 3 of the License, or  
+(at your option) any later version.  
+
+This program is distributed in the hope that it will be useful,  
+but WITHOUT ANY WARRANTY; without even the implied warranty of  
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the  
+GNU General Public License for more details.  
+
+You should have received a copy of the GNU General Public License  
+along with this program. If not, see <https://www.gnu.org/licenses/>.
