@@ -19,7 +19,7 @@ cd merlin
 
 # Build and run
 cargo build --release
-./target/release/merlin serve --config ./merlin.toml
+./target/release/merlin serve --port 7777 --config ./merlin.toml
 ```
 
 ## Configuration Example  
@@ -35,6 +35,58 @@ exploration_rate = 0.15
 [telemetry]
 prometheus_port = 9090
 jaeger_endpoint = "http://localhost:14268/api/traces"
+```
+
+## API Usage
+
+Once the server is running, interact with Merlin through these HTTP endpoints:
+
+### Chat Endpoint
+```bash
+curl -X POST http://localhost:7777/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What is the capital of France?",
+    "max_tokens": 100
+  }'
+```
+
+Response:
+```json
+{
+  "response": "The capital of France is Paris.",
+  "provider": "openai"
+}
+```
+
+### Health Check
+```bash
+curl http://localhost:7777/health
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "version": "0.1.0"
+}
+```
+
+### Metrics
+```bash
+curl http://localhost:7777/metrics
+```
+
+Response:
+```json
+{
+  "requests_total": 42,
+  "avg_latency_ms": 250.5,
+  "providers": {
+    "openai": { "requests": 25, "avg_latency": 200 },
+    "anthropic": { "requests": 17, "avg_latency": 320 }
+  }
+}
 ```
 
 ## Performance Dashboard  

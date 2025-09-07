@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
                         .short('p')
                         .value_name("PORT")
                         .help("Port to listen on")
-                        .default_value("8080"),
+                        .default_value("7777"),
                 )
                 .arg(
                     Arg::new("config")
@@ -41,7 +41,15 @@ async fn main() -> anyhow::Result<()> {
 
             println!("Starting Merlin server on {}", addr);
 
-            let app = server::create_server();
+            let app = match server::create_server_with_state().await {
+                Ok(app) => app,
+                Err(e) => {
+                    eprintln!("Failed to initialize server: {}", e);
+                    eprintln!("Note: Make sure Redis is running for model selection features");
+                    // Fallback to basic server without model selection
+                    server::create_server()
+                }
+            };
 
             let listener = tokio::net::TcpListener::bind(&addr).await?;
             axum::serve(listener, app).await?;

@@ -19,10 +19,10 @@ func main() {
 	defer client.Close()
 
 	// get reference to the local project
-	src := client.Host().Directory(".")
+	src := client.Host().Directory("/Users/a/code/merlin")
 
 	// get `rust` image
-	rust := client.Container().From("rust:1.75")
+	rust := client.Container().From("rust:latest")
 
 	// mount cloned repository into `rust` image
 	rust = rust.WithDirectory("/src", src).WithWorkdir("/src")
@@ -57,8 +57,8 @@ func main() {
 	fmt.Println("Clippy output:", lintOut)
 
 	// check formatting
-	fmt := rust.WithExec([]string{"cargo", "fmt", "--check"})
-	fmtOut, err := fmt.Stdout(ctx)
+	format := rust.WithExec([]string{"cargo", "fmt", "--check"})
+	fmtOut, err := format.Stdout(ctx)
 	if err != nil {
 		panic(err)
 	}

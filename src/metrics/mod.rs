@@ -32,4 +32,14 @@ impl MetricCollector {
             .await
             .unwrap();
     }
+
+    pub async fn record_failure(&mut self, provider: &str) {
+        let key = format!("metrics:{}:failure", provider);
+        let timestamp = chrono::Utc::now().timestamp();
+        let _: () = self
+            .conn
+            .zadd(key, format!("failure-{}", timestamp), timestamp)
+            .await
+            .unwrap();
+    }
 }
