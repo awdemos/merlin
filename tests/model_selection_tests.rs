@@ -5,7 +5,7 @@ use merlin::IntelligentModelSelector;
 #[tokio::test]
 async fn test_model_selection_quality_optimization() {
     // This test will fail without Redis, but shows the expected behavior
-    if let Ok(selector) = IntelligentModelSelector::new().await {
+    if let Ok(mut selector) = IntelligentModelSelector::new().await {
         let request = ModelSelectRequest {
             messages: vec![
                 Message {
@@ -43,7 +43,7 @@ async fn test_model_selection_quality_optimization() {
 
 #[tokio::test] 
 async fn test_model_selection_cost_optimization() {
-    if let Ok(selector) = IntelligentModelSelector::new().await {
+    if let Ok(mut selector) = IntelligentModelSelector::new().await {
         let request = ModelSelectRequest {
             messages: vec![
                 Message {
