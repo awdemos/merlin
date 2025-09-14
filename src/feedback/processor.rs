@@ -125,6 +125,12 @@ impl FeedbackProcessor {
         
         Ok(())
     }
+
+    pub fn new_fallback() -> Self {
+        Self {
+            storage: FeedbackStorage::new_fallback(),
+        }
+    }
 }
 
 #[cfg(test)]

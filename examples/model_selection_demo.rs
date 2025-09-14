@@ -7,7 +7,7 @@ async fn main() -> anyhow::Result<()> {
     println!("🧙 Merlin Model Selection Demo\n");
     
     // Initialize the intelligent model selector
-    let selector = match IntelligentModelSelector::new().await {
+    let mut selector = match IntelligentModelSelector::new().await {
         Ok(selector) => {
             println!("✅ Model selector initialized successfully");
             selector

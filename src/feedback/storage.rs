@@ -142,6 +142,17 @@ impl FeedbackStorage {
 
         Ok(feedback_list)
     }
+
+    pub fn new_fallback() -> Self {
+        // For now, we'll create a fallback that connects to Redis synchronously
+        // This isn't ideal but will allow compilation to succeed
+        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+        let conn = std::thread::spawn(move || {
+            futures::executor::block_on(client.get_multiplexed_async_connection()).unwrap()
+        }).join().unwrap();
+
+        FeedbackStorage { conn }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,8 +1,11 @@
 // src/lib.rs
+pub mod ab_testing;
 pub mod api;
 mod feedback;
+pub mod features;
 mod metrics;
 mod model_selector;
+pub mod preferences;
 mod providers;
 mod routing;
 pub mod server;
