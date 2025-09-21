@@ -13,7 +13,15 @@
       "Bash(./.specify/scripts/bash/check-implementation-prerequisites.sh:*)",
       "Bash(./target/debug/merlin:*)",
       "Bash(cargo build:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo fix:*)",
+      "Bash(xargs:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

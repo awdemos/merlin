@@ -1,7 +1,27 @@
 {
-  "features": {},
-  "feature_numbers": {},
-  "last_assigned_number": 0,
+  "features": {
+    "001-Test Feature": {
+      "id": "001-Test Feature",
+      "number": 1,
+      "name": "Test Feature",
+      "description": "A test feature",
+      "status": "Draft",
+      "created_at": "2025-09-21T03:00:06.285614Z",
+      "updated_at": "2025-09-21T03:00:06.285614Z",
+      "metadata": null,
+      "branch_name": "001-Test Feature"
+    }
+  },
+  "feature_numbers": {
+    "1": {
+      "value": 1,
+      "prefix": "",
+      "is_reserved": false,
+      "assigned_at": "2025-09-21T03:00:06.285640Z",
+      "feature_id": "001-Test Feature"
+    }
+  },
+  "last_assigned_number": 1,
   "reserved_numbers": [
     100,
     200,
