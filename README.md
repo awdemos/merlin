@@ -99,9 +99,64 @@ We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for 
 **GPL v3 License**  
 Copyright © 2025 RegicideOS Project  
 
-This program is free software: you can redistribute it and/or modify  
-it under the terms of the GNU General Public License as published by  
-the Free Software Foundation, either version 3 of the License, or  
+## Systemd Service Deployment
+
+For production deployment, Merlin includes a complete systemd service configuration:
+
+### Quick Install
+
+```bash
+# Build the release binary
+cargo build --release
+
+# Install as systemd service
+sudo ./scripts/install-systemd.sh
+
+# Verify service is running
+systemctl status merlin
+journalctl -u merlin -f
+```
+
+### Service Features
+
+- 🔒 **Security Hardened**: Non-root execution with restricted permissions
+- 📊 **Resource Managed**: Memory limits and CPU scheduling
+- 🔄 **Auto-restart**: Automatic recovery on failures
+- 📝 **Integrated Logging**: Native systemd journald support
+- 🔧 **Redis Integration**: Automatic dependency management
+- 📈 **Monitoring**: Health checks and metrics endpoints
+
+### Service Management
+
+```bash
+# Start/stop service
+sudo systemctl start merlin
+sudo systemctl stop merlin
+
+# Enable on boot
+sudo systemctl enable merlin
+
+# View logs
+journalctl -u merlin -f
+
+# Check health
+curl http://localhost:4242/health
+```
+
+### Configuration
+
+Service configuration is managed through:
+- **Environment**: `/etc/merlin/merlin.env`
+- **Settings**: `/etc/merlin/merlin.conf`
+- **Systemd**: `/etc/systemd/system/merlin.service`
+
+For detailed documentation, see `docs/systemd/README.md`.
+
+---
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.  
 
 This program is distributed in the hope that it will be useful,  
