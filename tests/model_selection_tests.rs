@@ -1,5 +1,5 @@
 // tests/model_selection_tests.rs
-use merlin::api::{ModelSelectRequest, Message, UserPreferences, OptimizationTarget, DomainCategory};
+use merlin::api::{ModelSelectRequest, Message, ModelUserPreferences, OptimizationTarget, DomainCategory};
 use merlin::IntelligentModelSelector;
 
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn test_model_selection_quality_optimization() {
                 "claude-3".to_string(),
                 "llama-3.1".to_string(),
             ],
-            preferences: Some(UserPreferences {
+            preferences: Some(ModelUserPreferences {
                 optimize_for: Some(OptimizationTarget::Quality),
                 max_tokens: Some(2000),
                 user_id: None,
@@ -56,7 +56,7 @@ async fn test_model_selection_cost_optimization() {
                 "claude-3".to_string(), 
                 "llama-3.1".to_string(),
             ],
-            preferences: Some(UserPreferences {
+            preferences: Some(ModelUserPreferences {
                 optimize_for: Some(OptimizationTarget::Cost),
                 max_tokens: Some(100),
                 user_id: None,

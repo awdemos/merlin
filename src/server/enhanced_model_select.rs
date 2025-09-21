@@ -103,7 +103,7 @@ async fn enhanced_model_select(
 
     // Store the selection for later feedback recording
     // In a real implementation, you'd store this in a database or cache
-    let mut feedback_storage = app_state.feedback_processor.lock().await;
+    let feedback_storage = app_state.feedback_processor.lock().await;
     // Note: You might want to extend the feedback processor to handle enhanced selections
 
     Ok(Json(enhanced_response))

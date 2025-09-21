@@ -12,12 +12,12 @@ pub struct Message {
 pub struct ModelSelectRequest {
     pub messages: Vec<Message>,
     pub models: Vec<String>,
-    pub preferences: Option<UserPreferences>,
+    pub preferences: Option<ModelUserPreferences>,
     pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UserPreferences {
+pub struct ModelUserPreferences {
     pub optimize_for: Option<OptimizationTarget>,
     pub max_tokens: Option<u32>,
     pub user_id: Option<String>,
