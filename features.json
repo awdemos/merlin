@@ -1,0 +1,10 @@
+{
+  "features": {},
+  "feature_numbers": {},
+  "last_assigned_number": 0,
+  "reserved_numbers": [
+    100,
+    200,
+    300
+  ]
+}

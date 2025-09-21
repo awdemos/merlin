@@ -3,7 +3,17 @@
     "allow": [
       "Bash(cargo test:*)",
       "Bash(cargo check:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(uvx:*)",
+      "Bash(./.specify/scripts/bash/create-new-feature.sh:*)",
+      "Bash(./.specify/scripts/bash/setup-plan.sh:*)",
+      "Bash(./.specify/scripts/bash/check-task-prerequisites.sh:*)",
+      "Bash(./.specify/scripts/bash/check-implementation-prerequisites.sh:*)",
+      "Bash(./target/debug/merlin:*)",
+      "Bash(cargo build:*)",
+      "Bash(echo:*)"
     ],
     "deny": [],
     "ask": []
