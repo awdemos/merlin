@@ -2,6 +2,7 @@
 pub mod ab_testing;
 pub mod api;
 mod feedback;
+pub mod feature_numbering;
 pub mod features;
 mod metrics;
 mod model_selector;
