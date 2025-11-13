@@ -244,14 +244,15 @@ impl PromptFeatures {
 
         // Domain category as one-hot encoding
         vector.extend_from_slice(&match self.domain_category {
-            DomainCategory::General => [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            DomainCategory::Technical => [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            DomainCategory::Creative => [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            DomainCategory::Analytical => [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-            DomainCategory::Mathematical => [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-            DomainCategory::CodeGeneration => [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-            DomainCategory::Translation => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-            DomainCategory::Summarization => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            DomainCategory::General => [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            DomainCategory::Technical => [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            DomainCategory::Creative => [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            DomainCategory::Analytical => [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            DomainCategory::Mathematical => [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            DomainCategory::CodeGeneration => [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            DomainCategory::Translation => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            DomainCategory::Summarization => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            DomainCategory::Multilingual => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         });
 
         // Task type as one-hot encoding

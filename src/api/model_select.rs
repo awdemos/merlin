@@ -14,6 +14,9 @@ pub struct ModelSelectRequest {
     pub models: Vec<String>,
     pub preferences: Option<UserPreferences>,
     pub session_id: Option<String>,
+    pub tradeoff: Option<Tradeoff>,        // NEW: Cost/latency/quality optimization
+    pub timeout: Option<u32>,               // NEW: Timeout in seconds
+    pub default_model: Option<String>,        // NEW: Fallback model
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,6 +35,14 @@ pub enum OptimizationTarget {
     Speed,
     Cost,
     Balanced,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tradeoff {
+    Quality,
+    Cost,
+    Latency,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,6 +110,7 @@ pub enum DomainCategory {
     CodeGeneration,
     Translation,
     Summarization,
+    Multilingual,
 }
 
 impl std::fmt::Display for DomainCategory {
@@ -112,6 +124,7 @@ impl std::fmt::Display for DomainCategory {
             DomainCategory::CodeGeneration => write!(f, "code_generation"),
             DomainCategory::Translation => write!(f, "translation"),
             DomainCategory::Summarization => write!(f, "summarization"),
+            DomainCategory::Multilingual => write!(f, "multilingual"),
         }
     }
 }

@@ -1,11 +1,11 @@
-// src/providers/openai.rs
+// src/providers/groq.rs
 use crate::providers::{LlmProvider, ModelCapabilities};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use anyhow::Result;
 
-pub struct OpenAiProvider {
+pub struct GroqProvider {
     client: Client,
     api_key: String,
     model: String,
@@ -13,7 +13,7 @@ pub struct OpenAiProvider {
     capabilities: Option<ModelCapabilities>,
 }
 
-impl OpenAiProvider {
+impl GroqProvider {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
         Self {
             client: Client::new(),
@@ -26,7 +26,7 @@ impl OpenAiProvider {
 }
 
 #[async_trait]
-impl LlmProvider for OpenAiProvider {
+impl LlmProvider for GroqProvider {
     async fn chat(&self, prompt: &str) -> Result<String> {
         let response = self.client
             .post(&format!("{}/chat/completions", self.base_url))
@@ -42,7 +42,7 @@ impl LlmProvider for OpenAiProvider {
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "OpenAI API error: {} - {}",
+                "Groq API error: {} - {}",
                 response.status(),
                 response.text().await.unwrap_or_default()
             ));
@@ -63,11 +63,11 @@ impl LlmProvider for OpenAiProvider {
             None => {}
         }
 
-        Err(anyhow::anyhow!("Invalid response format from OpenAI API"))
+        Err(anyhow::anyhow!("Invalid response format from Groq API"))
     }
 
     fn name(&self) -> &'static str {
-        "OpenAI"
+        "Groq"
     }
     
     fn model(&self) -> &str {

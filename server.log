@@ -1,0 +1,12 @@
+Starting Merlin server on 0.0.0.0:8080
+[2m2025-11-13T13:56:42.575927Z[0m [33m WARN[0m [2mmerlin::server[0m[2m:[0m Failed to load config from merlin.toml, using defaults
+[2m2025-11-13T13:56:42.584959Z[0m [33m WARN[0m [2mmerlin::server[0m[2m:[0m Failed to load config from env, using hardcoded defaults
+[2m2025-11-13T13:56:51.699526Z[0m [31mERROR[0m [2mmerlin::server::openai_compatible[0m[2m:[0m Provider chat failed: OpenAI API error: 401 Unauthorized - {
+    "error": {
+        "message": "Incorrect API key provided: test-key. You can find your API key at https://platform.openai.com/account/api-keys.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_api_key"
+    }
+}
+

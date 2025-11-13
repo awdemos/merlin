@@ -83,6 +83,8 @@ mod tests {
         impl LlmProvider for Provider {
             async fn chat(&self, prompt: &str) -> anyhow::Result<String>;
             fn name(&self) -> &'static str;
+            fn model(&self) -> &str;
+            fn capabilities(&self) -> Option<&'static crate::providers::ModelCapabilities>;
         }
     }
 

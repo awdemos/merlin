@@ -59,6 +59,9 @@ async fn enhanced_model_select(
         models: request.models.clone(),
         preferences: None,
         session_id: None,
+        tradeoff: None, // TODO: Map from enhanced request if needed
+        timeout: None,  // TODO: Map from enhanced request if needed
+        default_model: None, // TODO: Map from enhanced request if needed
     };
 
     // Get user preferences if available
