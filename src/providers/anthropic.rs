@@ -1,11 +1,11 @@
-// src/providers/openai.rs
+// src/providers/anthropic.rs
 use crate::providers::{LlmProvider, ModelCapabilities};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use anyhow::Result;
 
-pub struct OpenAiProvider {
+pub struct AnthropicProvider {
     client: Client,
     api_key: String,
     model: String,
@@ -13,7 +13,7 @@ pub struct OpenAiProvider {
     capabilities: Option<ModelCapabilities>,
 }
 
-impl OpenAiProvider {
+impl AnthropicProvider {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
         Self {
             client: Client::new(),
@@ -26,23 +26,24 @@ impl OpenAiProvider {
 }
 
 #[async_trait]
-impl LlmProvider for OpenAiProvider {
+impl LlmProvider for AnthropicProvider {
     async fn chat(&self, prompt: &str) -> Result<String> {
         let response = self.client
-            .post(&format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
+            .post(&format!("{}/v1/messages", self.base_url))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
             .json(&json!({
                 "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 4096,
-                "temperature": 0.7
+                "messages": [{"role": "user", "content": prompt}]
             }))
             .send()
             .await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "OpenAI API error: {} - {}",
+                "Anthropic API error: {} - {}",
                 response.status(),
                 response.text().await.unwrap_or_default()
             ));
@@ -50,24 +51,22 @@ impl LlmProvider for OpenAiProvider {
 
         let resp: Value = response.json().await?;
         
-        match resp["choices"].as_array() {
-            Some(choices) => {
-                if let Some(first_choice) = choices.first() {
-                    if let Some(message) = first_choice["message"].as_object() {
-                        if let Some(content) = message["content"].as_str() {
-                            return Ok(content.to_string());
-                        }
+        match resp["content"].as_array() {
+            Some(content_array) => {
+                if let Some(first_content) = content_array.first() {
+                    if let Some(text) = first_content["text"].as_str() {
+                        return Ok(text.to_string());
                     }
                 }
             }
             None => {}
         }
 
-        Err(anyhow::anyhow!("Invalid response format from OpenAI API"))
+        Err(anyhow::anyhow!("Invalid response format from Anthropic API"))
     }
 
     fn name(&self) -> &'static str {
-        "OpenAI"
+        "Anthropic"
     }
     
     fn model(&self) -> &str {

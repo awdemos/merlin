@@ -1,10 +1,10 @@
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
     Router,
 };
 use serde_json::{json, Value};
-use tower::ServiceExt;
+use tower::util::ServiceExt;
 
 use merlin::server::{create_server_with_state, AppState};
 use merlin::server::preferences::PreferenceServerState;
@@ -41,7 +41,7 @@ async fn test_create_user_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert_eq!(response_data["preferences"]["user_id"].as_str().unwrap(), "test_user_123");
@@ -84,7 +84,7 @@ async fn test_get_user_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert_eq!(response_data["preferences"]["user_id"].as_str().unwrap(), "test_user_get");
@@ -135,7 +135,7 @@ async fn test_update_user_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert_eq!(response_data["preferences"]["optimize_for"], "balanced");
@@ -178,7 +178,7 @@ async fn test_delete_user_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
 
@@ -235,7 +235,7 @@ async fn test_list_users() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert!(response_data["users"].as_array().unwrap().len() >= 3);
@@ -293,7 +293,7 @@ async fn test_record_user_interaction() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
 }
@@ -360,7 +360,7 @@ async fn test_get_user_stats() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert_eq!(response_data["stats"]["user_id"].as_str().unwrap(), "test_user_stats");
@@ -411,7 +411,7 @@ async fn test_search_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     let user_ids: Vec<&str> = response_data["user_ids"]
@@ -456,7 +456,7 @@ async fn test_validate_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert!(response_data["valid"].as_bool().unwrap());
@@ -488,7 +488,7 @@ async fn test_validate_preferences() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let response_data: Value = serde_json::from_slice(&body).unwrap();
     assert!(response_data["success"].as_bool().unwrap());
     assert!(!response_data["valid"].as_bool().unwrap());

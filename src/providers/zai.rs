@@ -1,11 +1,11 @@
-// src/providers/openai.rs
+// src/providers/zai.rs
 use crate::providers::{LlmProvider, ModelCapabilities};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use anyhow::Result;
 
-pub struct OpenAiProvider {
+pub struct ZAIProvider {
     client: Client,
     api_key: String,
     model: String,
@@ -13,7 +13,7 @@ pub struct OpenAiProvider {
     capabilities: Option<ModelCapabilities>,
 }
 
-impl OpenAiProvider {
+impl ZAIProvider {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
         Self {
             client: Client::new(),
@@ -26,14 +26,23 @@ impl OpenAiProvider {
 }
 
 #[async_trait]
-impl LlmProvider for OpenAiProvider {
+impl LlmProvider for ZAIProvider {
     async fn chat(&self, prompt: &str) -> Result<String> {
-        let response = self.client
-            .post(&format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
+        let url = format!("{}/v1/chat/completions", self.base_url);
+        
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
             .json(&json!({
                 "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
                 "max_tokens": 4096,
                 "temperature": 0.7
             }))
@@ -42,38 +51,28 @@ impl LlmProvider for OpenAiProvider {
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "OpenAI API error: {} - {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
+                "ZAI request failed: {}",
+                response.status()
             ));
         }
 
         let resp: Value = response.json().await?;
-        
-        match resp["choices"].as_array() {
-            Some(choices) => {
-                if let Some(first_choice) = choices.first() {
-                    if let Some(message) = first_choice["message"].as_object() {
-                        if let Some(content) = message["content"].as_str() {
-                            return Ok(content.to_string());
-                        }
-                    }
-                }
-            }
-            None => {}
-        }
 
-        Err(anyhow::anyhow!("Invalid response format from OpenAI API"))
+        if let Some(content) = resp["choices"][0]["message"]["content"].as_str() {
+            Ok(content.to_string())
+        } else {
+            Err(anyhow::anyhow!("Invalid response format from ZAI"))
+        }
     }
 
     fn name(&self) -> &'static str {
-        "OpenAI"
+        "ZAI"
     }
-    
+
     fn model(&self) -> &str {
         &self.model
     }
-    
+
     fn capabilities(&self) -> Option<&ModelCapabilities> {
         self.capabilities.as_ref()
     }

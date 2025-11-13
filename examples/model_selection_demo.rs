@@ -1,5 +1,6 @@
 // examples/model_selection_demo.rs
-use merlin::api::{ModelSelectRequest, Message, UserPreferences, OptimizationTarget};
+use merlin::api::{ModelSelectRequest, Message, OptimizationTarget};
+use merlin::api::model_select::UserPreferences;
 use merlin::IntelligentModelSelector;
 
 #[tokio::main]

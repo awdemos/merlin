@@ -1,4 +1,4 @@
-use crate::LlmProvider;
+use crate::{LlmProvider, providers::ModelCapabilities};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value;
@@ -53,5 +53,13 @@ impl LlmProvider for OllamaProvider {
 
     fn name(&self) -> &'static str {
         "Ollama"
+    }
+
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn capabilities(&self) -> Option<&ModelCapabilities> {
+        None // Will be loaded dynamically
     }
 }

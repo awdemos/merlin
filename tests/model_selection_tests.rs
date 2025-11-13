@@ -1,5 +1,6 @@
 // tests/model_selection_tests.rs
-use merlin::api::{ModelSelectRequest, Message, UserPreferences, OptimizationTarget, DomainCategory};
+use merlin::api::{ModelSelectRequest, Message, OptimizationTarget, DomainCategory};
+use merlin::api::model_select::UserPreferences;
 use merlin::IntelligentModelSelector;
 
 #[tokio::test]
@@ -14,9 +15,9 @@ async fn test_model_selection_quality_optimization() {
                 }
             ],
             models: vec![
-                "gpt-4".to_string(),
-                "claude-3".to_string(),
-                "llama-3.1".to_string(),
+                "gpt-4-turbo-preview".to_string(),
+                "claude-3-opus-20240229".to_string(),
+                "llama-3-70b".to_string(),
             ],
             preferences: Some(UserPreferences {
                 optimize_for: Some(OptimizationTarget::Quality),
@@ -26,12 +27,15 @@ async fn test_model_selection_quality_optimization() {
                 custom_weights: None,
             }),
             session_id: None,
+            tradeoff: None,
+            timeout: None,
+            default_model: None,
         };
 
         let response = selector.select_model(request).await.unwrap();
         
         // Should prefer GPT-4 for high-quality technical content
-        assert_eq!(response.recommended_model, "gpt-4");
+        assert_eq!(response.recommended_model, "gpt-4-turbo-preview");
         assert!(response.confidence > 0.8);
         assert!(!response.reasoning.is_empty());
         assert!(response.alternatives.len() >= 1);
@@ -52,9 +56,9 @@ async fn test_model_selection_cost_optimization() {
                 }
             ],
             models: vec![
-                "gpt-4".to_string(),
-                "claude-3".to_string(), 
-                "llama-3.1".to_string(),
+                "gpt-4-turbo-preview".to_string(),
+                "claude-3-sonnet-20240229".to_string(), 
+                "llama-3-70b".to_string(),
             ],
             preferences: Some(UserPreferences {
                 optimize_for: Some(OptimizationTarget::Cost),
@@ -64,12 +68,15 @@ async fn test_model_selection_cost_optimization() {
                 custom_weights: None,
             }),
             session_id: None,
+            tradeoff: None,
+            timeout: None,
+            default_model: None,
         };
 
         let response = selector.select_model(request).await.unwrap();
         
         // Should prefer cheaper model for simple queries
-        assert_eq!(response.recommended_model, "llama-3.1");
+        assert_eq!(response.recommended_model, "llama-3-70b");
         assert!(response.estimated_cost.unwrap() < 0.02); // Should be cost-effective
     }
 }

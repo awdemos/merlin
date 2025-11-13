@@ -19,6 +19,7 @@ fn convert_optimization_target(api_target: &crate::api::OptimizationTarget) -> M
 }
 use std::sync::Arc;
 use crate::{IntelligentModelSelector, FeedbackProcessor, api::{ModelSelectRequest, ModelSelectResponse, FeedbackRequest, FeedbackResponse}};
+use crate::providers::{MerlinConfig, ProviderRegistry, CapabilityLoader};
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
@@ -48,6 +49,7 @@ pub fn create_server() -> Router {
 pub mod ab_testing;
 pub mod enhanced_model_select;
 pub mod preferences;
+pub mod openai_compatible;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -55,6 +57,8 @@ pub struct AppState {
     pub feedback_processor: Arc<tokio::sync::Mutex<FeedbackProcessor>>,
     pub preference_server_state: Arc<crate::server::preferences::PreferenceServerState>,
     pub experiment_runner: Arc<tokio::sync::Mutex<crate::ab_testing::experiment::ExperimentRunner>>,
+    pub provider_registry: Arc<ProviderRegistry>,
+    pub capability_loader: Arc<tokio::sync::Mutex<CapabilityLoader>>,
 }
 
 impl AsRef<Arc<crate::preferences::PreferenceManager>> for AppState {
@@ -64,8 +68,36 @@ impl AsRef<Arc<crate::preferences::PreferenceManager>> for AppState {
 }
 
 pub async fn create_server_with_state() -> anyhow::Result<Router> {
+    // Load configuration
+    let config_path = std::env::var("MERLIN_CONFIG").unwrap_or_else(|_| "merlin.toml".to_string());
+    let config = MerlinConfig::load_from_file(&config_path)
+        .unwrap_or_else(|_| {
+            tracing::warn!("Failed to load config from {}, using defaults", config_path);
+            MerlinConfig::load_from_env().unwrap_or_else(|_| {
+                tracing::warn!("Failed to load config from env, using hardcoded defaults");
+                MerlinConfig::default()
+            })
+        });
+
+    // Initialize provider registry
+    let mut provider_registry = ProviderRegistry::new();
+    provider_registry.register_default_factories();
+    
+    // Initialize capability loader
+    let mut capability_loader = CapabilityLoader::new();
+    let capabilities_file = config.routing.capabilities_file.as_deref().unwrap_or("capabilities.toml");
+    if let Err(e) = capability_loader.load_from_file(capabilities_file).await {
+        tracing::warn!("Failed to load capabilities from {}: {}", capabilities_file, e);
+        // Use default capabilities as fallback
+        capability_loader = CapabilityLoader::get_default_capabilities();
+    }
+
+    let capability_loader_arc = Arc::new(tokio::sync::Mutex::new(capability_loader));
+    
     let model_selector = Arc::new(
-        tokio::sync::Mutex::new(IntelligentModelSelector::new().await?)
+        tokio::sync::Mutex::new(IntelligentModelSelector::new_with_capability_loader(
+            capability_loader_arc.clone()
+        ).await?)
     );
 
     let feedback_processor = Arc::new(
@@ -89,12 +121,14 @@ pub async fn create_server_with_state() -> anyhow::Result<Router> {
     let experiment_runner = Arc::new(
         tokio::sync::Mutex::new(crate::ab_testing::experiment::ExperimentRunner::new(experiment_storage))
     );
-
+    
     let app_state = AppState {
         model_selector,
         feedback_processor,
         preference_server_state,
         experiment_runner,
+        provider_registry: Arc::new(provider_registry),
+        capability_loader: capability_loader_arc.clone(),
     };
 
     let app = Router::new()
@@ -114,6 +148,8 @@ pub async fn create_server_with_state() -> anyhow::Result<Router> {
         .merge(crate::server::ab_testing::create_ab_testing_routes())
         // Enhanced model selection endpoints
         .merge(crate::server::enhanced_model_select::create_enhanced_model_select_routes())
+        // OpenAI-compatible endpoints
+        .merge(crate::server::openai_compatible::create_openai_compatible_routes())
         .with_state(app_state);
 
     Ok(app)

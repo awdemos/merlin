@@ -1,17 +1,20 @@
 // src/model_selector.rs
 use crate::api::{
     ModelSelectRequest, ModelSelectResponse, ModelAlternative,
-    DomainCategory, TaskType,
+    DomainCategory, TaskType, Tradeoff,
 };
 use crate::preferences::models::UserPreferences;
 use crate::features::{PromptFeatures, EmbeddingManager};
 use crate::routing::RoutingPolicy;
 use crate::metrics::MetricCollector;
+use crate::providers::ModelCapabilities;
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub struct IntelligentModelSelector {
-    model_capabilities: HashMap<String, ModelCapabilities>,
+    capability_loader: Arc<tokio::sync::Mutex<crate::providers::CapabilityLoader>>,
+    model_capabilities: HashMap<String, InternalModelCapabilities>,
     routing_policy: RoutingPolicy,
     metrics: MetricCollector,
     model_history: HashMap<String, ModelPerformanceHistory>,
@@ -19,8 +22,23 @@ pub struct IntelligentModelSelector {
     feature_dim: usize,
 }
 
+// Convert from providers::ModelCapabilities to internal format for compatibility
+fn convert_model_capabilities(cap: &ModelCapabilities) -> InternalModelCapabilities {
+    InternalModelCapabilities {
+        name: cap.model.clone(),
+        strengths: cap.strengths.clone(),
+        cost_per_1k_tokens: cap.cost_per_1k_tokens,
+        avg_latency_ms: cap.avg_latency_ms,
+        max_tokens: cap.max_tokens,
+        quality_score: cap.quality_scores.overall,
+        creativity_score: cap.quality_scores.creativity,
+        reasoning_score: cap.quality_scores.reasoning,
+        code_score: cap.quality_scores.code,
+    }
+}
+
 #[derive(Debug, Clone)]
-struct ModelCapabilities {
+struct InternalModelCapabilities {
     pub name: String,
     pub strengths: Vec<DomainCategory>,
     pub cost_per_1k_tokens: f64,
@@ -43,76 +61,35 @@ struct ModelPerformanceHistory {
 
 impl IntelligentModelSelector {
     pub async fn new() -> anyhow::Result<Self> {
+        Self::new_with_capability_loader(Arc::new(tokio::sync::Mutex::new(
+            crate::providers::CapabilityLoader::get_default_capabilities()
+        ))).await
+    }
+
+    pub async fn new_with_capability_loader(
+        capability_loader: Arc<tokio::sync::Mutex<crate::providers::CapabilityLoader>>,
+    ) -> anyhow::Result<Self> {
         let metrics = MetricCollector::connect().await?;
-
-        // Initialize with common model capabilities
+        
+        // Load model capabilities dynamically
+        let loader = capability_loader.lock().await;
+        let available_models = loader.list_models();
         let mut model_capabilities = HashMap::new();
-
-        // GPT-4 capabilities
-        model_capabilities.insert(
-            "gpt-4".to_string(),
-            ModelCapabilities {
-                name: "gpt-4".to_string(),
-                strengths: vec![
-                    DomainCategory::Analytical,
-                    DomainCategory::Technical,
-                    DomainCategory::Mathematical,
-                ],
-                cost_per_1k_tokens: 0.03,
-                avg_latency_ms: 2500,
-                max_tokens: 4096,
-                quality_score: 0.95,
-                creativity_score: 0.85,
-                reasoning_score: 0.95,
-                code_score: 0.90,
+        
+        for model_id in available_models {
+            if let Some(cap) = loader.get_capabilities_by_model(&model_id) {
+                let internal_cap = convert_model_capabilities(cap);
+                model_capabilities.insert(model_id, internal_cap);
             }
-        );
-
-        // Claude-3 capabilities
-        model_capabilities.insert(
-            "claude-3".to_string(),
-            ModelCapabilities {
-                name: "claude-3".to_string(),
-                strengths: vec![
-                    DomainCategory::Creative,
-                    DomainCategory::Analytical,
-                    DomainCategory::General,
-                ],
-                cost_per_1k_tokens: 0.025,
-                avg_latency_ms: 2000,
-                max_tokens: 8192,
-                quality_score: 0.92,
-                creativity_score: 0.95,
-                reasoning_score: 0.88,
-                code_score: 0.85,
-            }
-        );
-
-        // Llama-3.1 capabilities
-        model_capabilities.insert(
-            "llama-3.1".to_string(),
-            ModelCapabilities {
-                name: "llama-3.1".to_string(),
-                strengths: vec![
-                    DomainCategory::General,
-                    DomainCategory::CodeGeneration,
-                ],
-                cost_per_1k_tokens: 0.01,
-                avg_latency_ms: 1500,
-                max_tokens: 2048,
-                quality_score: 0.80,
-                creativity_score: 0.75,
-                reasoning_score: 0.78,
-                code_score: 0.88,
-            }
-        );
+        }
+        drop(loader);
 
         // Calculate feature dimension based on our feature vector
         let feature_dim = 4 + // Domain categories (one-hot)
                         4 + // Task types (one-hot)
                         2 + // Complexity and normalized tokens
                         24; // Keyword features
-
+        
         // Initialize Contextual Bandit with available models
         let routing_policy = RoutingPolicy::new_contextual(
             model_capabilities.len(),
@@ -123,8 +100,9 @@ impl IntelligentModelSelector {
 
         // Initialize embedding manager
         let embedding_manager = EmbeddingManager::new(64); // 64-dimensional embeddings
-
+        
         Ok(IntelligentModelSelector {
+            capability_loader,
             model_capabilities,
             routing_policy,
             metrics,
@@ -136,6 +114,7 @@ impl IntelligentModelSelector {
     
     pub async fn select_model(&mut self, request: ModelSelectRequest) -> anyhow::Result<ModelSelectResponse> {
         let session_id = request.session_id
+            .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
 
         // Analyze the prompt features using enhanced feature extraction
@@ -153,9 +132,27 @@ impl IntelligentModelSelector {
         let mut context_features = feature_vector;
         context_features.extend_from_slice(&prompt_embedding);
 
-        // Use contextual bandit to select model
-        let model_names: Vec<&String> = request.models.iter().collect();
-        let provider_indices: Vec<usize> = (0..request.models.len()).collect();
+        // Apply tradeoff optimization if specified
+        let filtered_models = if let Some(tradeoff) = &request.tradeoff {
+            self.apply_tradeoff_filter(&request.models, tradeoff, &features)?
+        } else {
+            request.models.clone()
+        };
+
+        // If no models remain after filtering, use fallback
+        let final_models = if filtered_models.is_empty() {
+            if let Some(fallback) = &request.default_model {
+                vec![fallback.clone()]
+            } else {
+                request.models.clone()
+            }
+        } else {
+            filtered_models
+        };
+
+        // Use contextual bandit to select model from filtered list
+        let model_names: Vec<&String> = final_models.iter().collect();
+        let provider_indices: Vec<usize> = (0..final_models.len()).collect();
 
         // Find the best model using contextual bandit
         let selected_index = self.routing_policy.select_index_with_context(
@@ -163,9 +160,22 @@ impl IntelligentModelSelector {
             &context_features
         );
 
-        let recommended_model = &request.models[selected_index];
+        let recommended_model = &final_models[selected_index];
         let capabilities = self.model_capabilities.get(recommended_model)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {}", recommended_model))?;
+
+        // Check timeout constraints
+        if let Some(timeout_seconds) = request.timeout {
+            let estimated_latency_seconds = capabilities.avg_latency_ms as f64 / 1000.0;
+            if estimated_latency_seconds > timeout_seconds as f64 {
+                // Try to find a faster model
+                if let Some(faster_model) = self.find_faster_model(&final_models, timeout_seconds, selected_index)? {
+                    return self.select_fallback_model(faster_model, &features, &session_id, &request).await;
+                } else if let Some(fallback) = &request.default_model {
+                    return self.select_fallback_model(fallback.clone(), &features, &session_id, &request).await;
+                }
+            }
+        }
 
         // Calculate confidence based on contextual bandit prediction
         let confidence = self.calculate_contextual_confidence(&context_features, selected_index);
@@ -176,13 +186,14 @@ impl IntelligentModelSelector {
             &features,
             &context_features,
             selected_index,
+            &request.tradeoff,
         );
 
         // Create alternatives list with contextual scores
         let alternatives: Vec<ModelAlternative> = provider_indices.iter()
             .filter(|&&i| i != selected_index)
             .map(|&i| {
-                let model_name = &request.models[i];
+                let model_name = &final_models[i];
                 let model_caps = self.model_capabilities.get(model_name).unwrap();
                 let alt_confidence = self.calculate_contextual_confidence(&context_features, i);
 
@@ -226,10 +237,11 @@ impl IntelligentModelSelector {
 
     fn generate_contextual_reasoning(
         &self,
-        capabilities: &ModelCapabilities,
+        capabilities: &InternalModelCapabilities,
         features: &PromptFeatures,
         context_features: &[f64],
         _selected_index: usize,
+        tradeoff: &Option<Tradeoff>,
     ) -> String {
         let mut reasoning = Vec::new();
 
@@ -257,16 +269,89 @@ impl IntelligentModelSelector {
         // Learning-based reasoning
         reasoning.push("Selection informed by contextual bandit learning".to_string());
 
+        // Add tradeoff-specific reasoning
+        if let Some(tradeoff) = tradeoff {
+            match tradeoff {
+                Tradeoff::Quality => reasoning.push("Optimized for quality output".to_string()),
+                Tradeoff::Cost => reasoning.push("Optimized for cost efficiency".to_string()),
+                Tradeoff::Latency => reasoning.push("Optimized for low latency".to_string()),
+            }
+        }
+
         if reasoning.is_empty() {
             reasoning.push("Selected based on contextual analysis and historical performance".to_string());
         }
 
         reasoning.join("; ")
     }
+
+    fn apply_tradeoff_filter(&self, models: &[String], tradeoff: &Tradeoff, _features: &PromptFeatures) -> anyhow::Result<Vec<String>> {
+        let mut filtered_models = Vec::new();
+        
+        for model_name in models {
+            if let Some(capabilities) = self.model_capabilities.get(model_name) {
+                let meets_criteria = match tradeoff {
+                    Tradeoff::Quality => {
+                        // For quality optimization, prefer models with higher quality scores
+                        capabilities.quality_score >= 0.7
+                    }
+                    Tradeoff::Cost => {
+                        // For cost optimization, prefer cheaper models
+                        capabilities.cost_per_1k_tokens <= 0.01
+                    }
+                    Tradeoff::Latency => {
+                        // For latency optimization, prefer faster models
+                        capabilities.avg_latency_ms <= 2000
+                    }
+                };
+                
+                if meets_criteria {
+                    filtered_models.push(model_name.clone());
+                }
+            }
+        }
+        
+        Ok(filtered_models)
+    }
+
+    fn find_faster_model(&self, models: &[String], timeout_seconds: u32, exclude_index: usize) -> anyhow::Result<Option<String>> {
+        let timeout_ms = timeout_seconds as u32 * 1000;
+        
+        for (i, model_name) in models.iter().enumerate() {
+            if i == exclude_index {
+                continue;
+            }
+            
+            if let Some(capabilities) = self.model_capabilities.get(model_name) {
+                if capabilities.avg_latency_ms <= timeout_ms {
+                    return Ok(Some(model_name.clone()));
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+
+    async fn select_fallback_model(&self, model_name: String, features: &PromptFeatures, session_id: &str, request: &ModelSelectRequest) -> anyhow::Result<ModelSelectResponse> {
+        let capabilities = self.model_capabilities.get(&model_name)
+            .ok_or_else(|| anyhow::anyhow!("Fallback model not found: {}", model_name))?;
+
+        Ok(ModelSelectResponse {
+            recommended_model: model_name.clone(),
+            confidence: 0.5, // Lower confidence for fallback
+            reasoning: format!("Selected as fallback due to timeout constraints ({}s)", request.timeout.unwrap_or(0)),
+            alternatives: vec![],
+            estimated_cost: Some(
+                capabilities.cost_per_1k_tokens * (features.estimated_tokens as f64 / 1000.0)
+            ),
+            estimated_latency_ms: Some(capabilities.avg_latency_ms),
+            session_id: Some(session_id.to_string()),
+        })
+    }
     
     fn calculate_model_score(
         &self,
-        capabilities: &ModelCapabilities,
+        capabilities: &InternalModelCapabilities,
         features: &PromptFeatures,
         preferences: Option<&UserPreferences>,
     ) -> f64 {
@@ -342,7 +427,7 @@ impl IntelligentModelSelector {
     
     fn generate_reasoning(
         &self,
-        capabilities: &ModelCapabilities,
+        capabilities: &InternalModelCapabilities,
         features: &PromptFeatures,
         score: f64,
     ) -> String {
