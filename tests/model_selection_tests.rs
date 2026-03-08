@@ -1,12 +1,5 @@
 // tests/model_selection_tests.rs
-<<<<<<< HEAD
-use merlin::api::{ModelSelectRequest, Message, OptimizationTarget, DomainCategory};
-use merlin::api::model_select::UserPreferences;
-||||||| 87d1c1f
-use merlin::api::{ModelSelectRequest, Message, UserPreferences, OptimizationTarget, DomainCategory};
-=======
 use merlin::api::{ModelSelectRequest, Message, ModelUserPreferences, OptimizationTarget, DomainCategory};
->>>>>>> 110274beff6a7b9aaaad000da2af5580a57b0e72
 use merlin::IntelligentModelSelector;
 
 #[tokio::test]
