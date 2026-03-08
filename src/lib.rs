@@ -4,12 +4,17 @@ pub mod api;
 mod feedback;
 pub mod feature_numbering;
 pub mod features;
+pub mod integration;
 mod metrics;
+pub mod models;
 mod model_selector;
+pub mod performance;
 pub mod preferences;
 mod providers;
-mod routing;
+pub mod routing;
+pub mod security;
 pub mod server;
+pub mod services;
 
 
 pub use feedback::FeedbackProcessor;

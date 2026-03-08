@@ -3,6 +3,8 @@ pub mod enhanced_model_select;
 pub mod model_select;
 pub mod preferences;
 pub mod ab_testing;
+pub mod endpoints;
+pub mod middleware;
 
 pub use enhanced_model_select::*;
 // Use specific imports to avoid UserPreferences conflicts
@@ -20,3 +22,5 @@ pub use preferences::{
     PreferenceUpdateRequest, UserPreferences
 };
 pub use ab_testing::*;
+pub use endpoints::*;
+pub use middleware::*;
