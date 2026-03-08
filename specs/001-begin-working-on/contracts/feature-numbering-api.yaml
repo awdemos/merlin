@@ -1,0 +1,530 @@
+openapi: 3.0.0
+info:
+  title: Feature Numbering API
+  description: API for managing feature numbering and tracking system
+  version: 1.0.0
+  contact:
+    name: Merlin Development Team
+    email: dev@merlin.ai
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+paths:
+  /features:
+    get:
+      summary: List all features
+      description: Retrieve a paginated list of all features with optional filtering
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Draft, Planned, InProgress, Review, Completed, Cancelled, OnHold]
+        - name: search
+          in: query
+          schema:
+            type: string
+            description: Search in feature names and descriptions
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  features:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Feature'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Create new feature
+      description: Create a new feature with automatic number assignment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFeatureRequest'
+      responses:
+        '201':
+          description: Feature created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feature'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Feature name or branch name already exists
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /features/{featureId}:
+    get:
+      summary: Get feature by ID
+      description: Retrieve a specific feature by its ID
+      parameters:
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{3}-.+$'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feature'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      summary: Update feature
+      description: Update an existing feature
+      parameters:
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{3}-.+$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFeatureRequest'
+      responses:
+        '200':
+          description: Feature updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feature'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      summary: Delete feature
+      description: Delete a feature (only allowed in Draft status)
+      parameters:
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{3}-.+$'
+      responses:
+        '204':
+          description: Feature deleted successfully
+        '400':
+          description: Feature cannot be deleted (not in Draft status)
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /features/{featureId}/status:
+    patch:
+      summary: Update feature status
+      description: Update the status of a feature
+      parameters:
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{3}-.+$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatusRequest'
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feature'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /features/{featureId}/dependencies:
+    get:
+      summary: Get feature dependencies
+      description: Retrieve dependencies for a specific feature
+      parameters:
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{3}-.+$'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dependencies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Feature'
+                  dependents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Feature'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /numbers/next:
+    get:
+      summary: Get next available feature number
+      description: Get the next available feature number without assigning it
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  next_number:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                  prefix:
+                    type: string
+                  formatted:
+                    type: string
+                    example: "002"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /numbers/reserved:
+    get:
+      summary: List reserved numbers
+      description: Retrieve all reserved feature numbers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reserved_numbers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        number:
+                          type: integer
+                          format: int32
+                        reason:
+                          type: string
+                        reserved_at:
+                          type: string
+                          format: date-time
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Reserve a feature number
+      description: Reserve a specific feature number for future use
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveNumberRequest'
+      responses:
+        '201':
+          description: Number reserved successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Number already assigned or reserved
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /search:
+    get:
+      summary: Search features
+      description: Search features by various criteria
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: field
+          in: query
+          schema:
+            type: string
+            enum: [name, description, tags, assignee]
+            default: name
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Feature'
+                  total:
+                    type: integer
+                    format: int32
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  schemas:
+    Feature:
+      type: object
+      required:
+        - id
+        - number
+        - name
+        - description
+        - status
+        - created_at
+        - updated_at
+        - branch_name
+      properties:
+        id:
+          type: string
+          pattern: '^\d{3}-.+$'
+          example: "001-feature-numbering"
+        number:
+          type: integer
+          format: int32
+          minimum: 1
+          example: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-z0-9-]+$'
+          example: "feature-numbering"
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          example: "Systematic feature numbering and tracking system"
+        status:
+          type: string
+          enum: [Draft, Planned, InProgress, Review, Completed, Cancelled, OnHold]
+          example: "InProgress"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-09-20T10:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-09-20T15:30:00Z"
+        metadata:
+          $ref: '#/components/schemas/FeatureMetadata'
+        branch_name:
+          type: string
+          pattern: '^\d{3}-.+$'
+          example: "001-feature-numbering"
+
+    FeatureMetadata:
+      type: object
+      properties:
+        priority:
+          type: string
+          enum: [Low, Medium, High, Critical]
+          default: "Medium"
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 50
+        estimated_effort:
+          type: string
+          maxLength: 100
+        assignee:
+          type: string
+          maxLength: 100
+        dependencies:
+          type: array
+          items:
+            type: string
+            pattern: '^\d{3}-.+$'
+        related_features:
+          type: array
+          items:
+            type: string
+            pattern: '^\d{3}-.+$'
+
+    CreateFeatureRequest:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-z0-9-]+$'
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        metadata:
+          $ref: '#/components/schemas/FeatureMetadata'
+
+    UpdateFeatureRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-z0-9-]+$'
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        metadata:
+          $ref: '#/components/schemas/FeatureMetadata'
+
+    UpdateStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [Draft, Planned, InProgress, Review, Completed, Cancelled, OnHold]
+
+    ReserveNumberRequest:
+      type: object
+      required:
+        - number
+        - reason
+      properties:
+        number:
+          type: integer
+          format: int32
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+        limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+        pages:
+          type: integer
+          format: int32
+          minimum: 1
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string

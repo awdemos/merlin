@@ -1,0 +1,105 @@
+# Horizontal Pod Autoscaler for Merlin API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: merlin-api-hpa
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: merlin-api-deployment
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+---
+# Horizontal Pod Autoscaler for Redis
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: redis-hpa
+  namespace: merlin-system
+  labels:
+    app: redis
+    tier: cache
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: redis-deployment
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# Vertical Pod Autoscaler for Merlin API (if VPA is available)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: merlin-api-vpa
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: api
+spec:
+  targetRef:
+    apiVersion: "apps/v1"
+    kind: Deployment
+    name: merlin-api-deployment
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: "merlin-api"
+      minAllowed:
+        cpu: "250m"
+        memory: "256Mi"
+      maxAllowed:
+        cpu: "1000m"
+        memory: "1Gi"
+      controlledResources: ["cpu", "memory"]

@@ -6,8 +6,7 @@ use axum::{
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
-use merlin::server::{create_server_with_state, AppState};
-use merlin::server::preferences::PreferenceServerState;
+use merlin::server::create_server_with_state;
 
 #[tokio::test]
 async fn test_create_user_preferences() {
@@ -59,7 +58,7 @@ async fn test_get_user_preferences() {
         "temperature": 0.5
     });
 
-    app.oneshot(
+    app.clone().oneshot(
         Request::builder()
             .method("POST")
             .uri("/preferences/users")
@@ -102,7 +101,7 @@ async fn test_update_user_preferences() {
         "max_tokens": 1024
     });
 
-    app.oneshot(
+    app.clone().oneshot(
         Request::builder()
             .method("POST")
             .uri("/preferences/users")
@@ -153,7 +152,7 @@ async fn test_delete_user_preferences() {
         "optimize_for": "quality"
     });
 
-    app.oneshot(
+    app.clone().oneshot(
         Request::builder()
             .method("POST")
             .uri("/preferences/users")
@@ -165,7 +164,7 @@ async fn test_delete_user_preferences() {
     .unwrap();
 
     // Then delete the user
-    let response = app
+    let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("DELETE")
@@ -209,7 +208,7 @@ async fn test_list_users() {
             "optimize_for": "quality"
         });
 
-        app.oneshot(
+        app.clone().oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/preferences/users")
@@ -251,7 +250,7 @@ async fn test_record_user_interaction() {
         "optimize_for": "quality"
     });
 
-    app.oneshot(
+    app.clone().oneshot(
         Request::builder()
             .method("POST")
             .uri("/preferences/users")
@@ -308,7 +307,7 @@ async fn test_get_user_stats() {
         "optimize_for": "quality"
     });
 
-    app.oneshot(
+    app.clone().oneshot(
         Request::builder()
             .method("POST")
             .uri("/preferences/users")
@@ -335,7 +334,7 @@ async fn test_get_user_stats() {
         }
     });
 
-    app.oneshot(
+    app.clone().oneshot(
         Request::builder()
             .method("POST")
             .uri("/preferences/users/test_user_stats/interactions")
@@ -385,7 +384,7 @@ async fn test_search_preferences() {
             "learning_enabled": learning_enabled
         });
 
-        app.oneshot(
+        app.clone().oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/preferences/users")
@@ -442,7 +441,7 @@ async fn test_validate_preferences() {
         }
     });
 
-    let response = app
+    let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -474,7 +473,7 @@ async fn test_validate_preferences() {
         }
     });
 
-    let response = app
+    let response = app.clone()
         .oneshot(
             Request::builder()
                 .method("POST")

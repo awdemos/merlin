@@ -1,2 +1,12 @@
 /target
 /ci/build/
+
+# Claude Code files
+.claude/
+*.claude
+
+# Memory and temporary files
+memory/
+*.tmp
+*.temp
+.desloppify/
