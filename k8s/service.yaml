@@ -1,0 +1,160 @@
+# Main API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: merlin-api-service
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  - name: health
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
+  selector:
+    app: merlin-ai-router
+    tier: system
+    component: api
+---
+# Metrics Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: merlin-metrics-service
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: metrics
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: merlin-ai-router
+    tier: system
+    component: metrics
+---
+# Health Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: merlin-health-service
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: health
+spec:
+  type: ClusterIP
+  ports:
+  - name: health
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
+  selector:
+    app: merlin-ai-router
+    tier: system
+    component: health
+---
+# External API Service (LoadBalancer for external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: merlin-external-service
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: https
+    port: 443
+    targetPort: 8080
+    protocol: TCP
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: merlin-ai-router
+    tier: system
+    component: api
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master
+  namespace: merlin-system
+  labels:
+    app: redis
+    tier: cache
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: redis
+    tier: cache
+---
+# Prometheus Service (for monitoring)
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+  namespace: merlin-system
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - name: web
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: prometheus
+    tier: monitoring
+---
+# Grafana Service (for dashboards)
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+  namespace: merlin-system
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  selector:
+    app: grafana
+    tier: monitoring

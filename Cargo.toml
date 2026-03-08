@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 axum = "0.7"
 hyper = "1.0"
+warp = "0.3"
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
 reqwest = { version = "0.11", features = ["json"] }
 async-trait = "0.1"
@@ -25,6 +26,10 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 futures = "0.3"
 toml = "0.8"
 thiserror = "1.0"
+# API endpoint dependencies
+validator = { version = "0.16", features = ["derive"] }
+regex = "1.0"
+bcrypt = "0.15"
 
 [dev-dependencies]
 mockall = "0.11"

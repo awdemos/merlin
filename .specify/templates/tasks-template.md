@@ -17,6 +17,8 @@
    → Tests: contract tests, integration tests
    → Core: models, services, CLI commands
    → Integration: DB, middleware, logging
+   → Security: security hardening, validation, compliance
+   → Deployment: configuration, service management, containerization
    → Polish: unit tests, performance, docs
 4. Apply task rules:
    → Different files = mark [P] for parallel
@@ -69,18 +71,25 @@
 - [ ] T017 Request/response logging
 - [ ] T018 CORS and security headers
 
-## Phase 3.5: Polish
-- [ ] T019 [P] Unit tests for validation in tests/unit/test_validation.py
-- [ ] T020 Performance tests (<200ms)
-- [ ] T021 [P] Update docs/api.md
-- [ ] T022 Remove duplication
-- [ ] T023 Run manual-testing.md
+## Phase 3.5: Security & Deployment
+- [ ] T019 [P] Security hardening and validation tests
+- [ ] T020 [P] Service configuration validation
+- [ ] T021 [P] Deployment configuration tasks
+- [ ] T022 Integration tests for system services
+
+## Phase 3.6: Polish
+- [ ] T023 [P] Unit tests for validation in tests/unit/test_validation.py
+- [ ] T024 Performance tests (<200ms)
+- [ ] T025 [P] Update docs/api.md
+- [ ] T026 Remove duplication
+- [ ] T027 Run manual-testing.md
 
 ## Dependencies
 - Tests (T004-T007) before implementation (T008-T014)
 - T008 blocks T009, T015
 - T016 blocks T018
-- Implementation before polish (T019-T023)
+- Implementation before security & deployment (T019-T022)
+- Security & deployment before polish (T023-T027)
 
 ## Parallel Example
 ```
@@ -113,7 +122,7 @@ Task: "Integration test auth in tests/integration/test_auth.py"
    - Quickstart scenarios → validation tasks
 
 4. **Ordering**:
-   - Setup → Tests → Models → Services → Endpoints → Polish
+   - Setup → Tests → Models → Services → Endpoints → Security & Deployment → Polish
    - Dependencies block parallel execution
 
 ## Validation Checklist
@@ -122,6 +131,10 @@ Task: "Integration test auth in tests/integration/test_auth.py"
 - [ ] All contracts have corresponding tests
 - [ ] All entities have model tasks
 - [ ] All tests come before implementation
+- [ ] Security hardening tasks included for system services
+- [ ] Deployment configuration tasks included for all environments
 - [ ] Parallel tasks truly independent
 - [ ] Each task specifies exact file path
 - [ ] No task modifies same file as another [P] task
+- [ ] Service integration tests included for system components
+- [ ] Configuration validation tasks included

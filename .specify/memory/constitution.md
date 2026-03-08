@@ -18,7 +18,7 @@ All external AI model providers MUST implement the `LlmProvider` trait. Direct p
 **Rationale**: Enables multi-vendor support, facilitates testing, and allows easy addition of new providers without core system changes.
 
 ### IV. Test-First Development (NON-NEGOTIABLE)
-TDD is mandatory: Tests MUST be written → User approved → Tests MUST fail → Then implementation proceeds. Red-Green-Refactor cycle is strictly enforced. 100% test coverage is required for all critical routing logic.
+TDD is mandatory: Tests MUST be written → User approved → Tests MUST fail → Then implementation proceeds. Red-Green-Refactor cycle is strictly enforced. 100% test coverage is required for all critical routing logic and system services.
 
 **Rationale**: Ensures reliability, prevents regressions, and provides living documentation for the system behavior.
 
@@ -33,7 +33,7 @@ The system MUST implement multiple routing algorithms (Epsilon-Greedy, Thompson 
 **Rationale**: Provides optimal model selection, adapts to changing conditions, and maximizes user satisfaction.
 
 ### VII. Configuration-Driven Design
-All routing policies, provider configurations, and system settings MUST be configurable via TOML files. No hardcoded configuration values are permitted. Configuration validation MUST be implemented.
+All routing policies, provider configurations, and system settings MUST be configurable via TOML files and environment variables. No hardcoded configuration values are permitted. Configuration validation MUST be implemented for all deployment modes.
 
 **Rationale**: Enables flexibility across environments, facilitates A/B testing, and supports dynamic system adaptation.
 
@@ -63,6 +63,7 @@ All routing policies, provider configurations, and system settings MUST be confi
 - **Throughput**: Support for 1000+ concurrent requests
 - **Memory Usage**: Efficient memory management with proper cleanup
 - **Latency**: Real-time performance monitoring and alerting
+- **Service Availability**: 99.9% uptime for production deployments
 
 ## Development Workflow
 
@@ -79,6 +80,8 @@ All routing policies, provider configurations, and system settings MUST be confi
 - **Security**: No critical security vulnerabilities in dependencies
 - **Performance**: Must meet established performance benchmarks
 - **Documentation**: Complete documentation for all changes
+- **Service Integration**: All system services must pass integration tests
+- **Configuration Validation**: All configuration files must pass validation
 
 ### Code Review Requirements
 - All PRs must be reviewed by at least one maintainer
@@ -104,6 +107,7 @@ All routing policies, provider configurations, and system settings MUST be confi
 - Automated validation against project templates
 - Community feedback incorporated into governance
 - Transparency in all decision-making processes
+- Cross-platform deployment validation for all supported environments
 
 ### Enforcement
 - Build checks validate constitutional compliance
@@ -124,6 +128,8 @@ All routing policies, provider configurations, and system settings MUST be confi
 - Test tasks must precede implementation tasks
 - Quality gates must include constitutional validation
 - Documentation tasks must be included for all features
+- Security hardening tasks must be included for all system services
+- Deployment configuration tasks must be included for all supported environments
 
 ### Specification Validation
 - All specifications must pass constitutional validation
@@ -145,20 +151,29 @@ All routing policies, provider configurations, and system settings MUST be confi
 - Innovation within constitutional framework promoted
 - Technical debt must be managed, not avoided entirely
 
-**Version**: 1.0.0 | **Ratified**: 2025-09-20 | **Last Amended**: 2025-09-20
+**Version**: 1.1.0 | **Ratified**: 2025-09-20 | **Last Amended**: 2025-09-21
 
 <!-- Sync Impact Report -->
-**Version Change**: 0.0.0 → 1.0.0 (Initial creation)
-**Modified Principles**: None (new constitution)
-**Added Sections**: Core Principles (7), Technical Standards, Development Workflow, Governance, Template Integration, Continuous Improvement
-**Removed Sections**: None (new constitution)
+**Version Change**: 1.0.0 → 1.1.0 (Minor version bump - expanded principles and enhanced quality gates)
+**Modified Principles**:
+- Principle IV: Enhanced TDD requirements to include system services
+- Principle VII: Expanded configuration requirements to include environment variables and deployment modes
+
+**Added Sections**: None
+**Removed Sections**: None
+**Enhanced Sections**:
+- Technical Standards: Added service availability requirement
+- Quality Gates: Added service integration and configuration validation
+- Compliance Review: Added cross-platform deployment validation
+- Task Generation: Added security hardening and deployment configuration tasks
+
 **Templates Requiring Updates**:
 - ✅ `.specify/templates/plan-template.md` - Constitution Check section updated
 - ✅ `.specify/templates/spec-template.md` - Constitutional validation integrated
-- ✅ `.specify/templates/tasks-template.md` - TDD principles enforced
-- ⚠ `.claude/SLASH_COMMANDS.md` - May need constitutional compliance notes
+- ✅ `.specify/templates/tasks-template.md` - Enhanced with security and deployment task requirements
+- ✅ `.claude/commands/constitution.md` - Updated for enhanced validation requirements
 
-**Follow-up TODOs**: None - All placeholders resolved
+**Follow-up TODOs**: None - All requirements clarified and enhanced
 
 ---
 *This constitution guides all Merlin development, ensuring consistency, quality, and alignment with project goals.*
