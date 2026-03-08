@@ -1,14 +1,6 @@
-<<<<<<< HEAD
-// src/providers/openai.rs
-use crate::providers::{LlmProvider, ModelCapabilities};
-||||||| 87d1c1f
-// src/providers/openai.rs
-use crate::LlmProvider;
-=======
 //! OpenAI provider implementation.
 
-use crate::LlmProvider;
->>>>>>> 110274beff6a7b9aaaad000da2af5580a57b0e72
+use crate::providers::{LlmProvider, ModelCapabilities};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
