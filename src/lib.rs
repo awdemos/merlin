@@ -1,14 +1,51 @@
-// src/lib.rs
+//! # Merlin - Intelligent Multi-Provider LLM Router
+//!
+//! Merlin is an AI routing system that intelligently selects optimal language models
+//! based on real-time performance metrics. It supports multiple LLM providers and
+//! uses various routing policies (Epsilon-Greedy, Thompson Sampling, UCB) to
+//! distribute requests efficiently.
+//!
+//! ## Features
+//!
+//! - **Multi-Provider Support**: OpenAI, Ollama, and extensible provider system
+//! - **Smart Routing**: Epsilon-Greedy, Thompson Sampling, and UCB algorithms
+//! - **Real-Time Metrics**: Latency, cost, and quality tracking via Redis
+//! - **A/B Testing**: Built-in experiment framework for model comparison
+//!
+//! ## Example
+//!
+//! ```rust,ignore
+//! use merlin::{Router, RoutingPolicy, OpenAiProvider, LlmProvider};
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let providers = vec![OpenAiProvider::new("sk-...".into(), "gpt-4".into())];
+//!     let policy = RoutingPolicy::new_thompson_sampling(providers.len());
+//!     let mut router = Router::new(providers, policy).await;
+//!     
+//!     let response = router.route("Hello, world!", 100).await?;
+//!     println!("Response: {}", response);
+//!     Ok(())
+//! }
+//! ```
+
 pub mod ab_testing;
 pub mod api;
 mod feedback;
+pub mod feature_numbering;
 pub mod features;
+pub mod integration;
 mod metrics;
+pub mod models;
 mod model_selector;
+pub mod performance;
 pub mod preferences;
 mod providers;
-mod routing;
+pub mod routing;
+pub mod security;
 pub mod server;
+pub mod services;
+
 
 pub use feedback::FeedbackProcessor;
 pub use metrics::MetricCollector;
@@ -18,6 +55,14 @@ pub use providers::OllamaProvider;
 pub use providers::OpenAiProvider;
 pub use routing::RoutingPolicy;
 
+/// Intelligent router that selects the best LLM provider based on performance metrics.
+///
+/// The router uses a configurable routing policy to distribute requests across
+/// multiple LLM providers, tracking success/failure metrics to optimize selection.
+///
+/// # Type Parameters
+///
+/// * `P` - LLM provider implementation that implements [`LlmProvider`]
 pub struct Router<P: LlmProvider> {
     providers: Vec<P>,
     policy: RoutingPolicy,
@@ -25,6 +70,14 @@ pub struct Router<P: LlmProvider> {
 }
 
 impl<P: LlmProvider> Router<P> {
+    /// Creates a new router with the given providers and routing policy.
+    ///
+    /// Connects to Redis for metrics storage. Panics if Redis connection fails.
+    ///
+    /// # Arguments
+    ///
+    /// * `providers` - Vector of LLM provider instances
+    /// * `policy` - Routing policy for provider selection
     pub async fn new(providers: Vec<P>, policy: RoutingPolicy) -> Self {
         let metrics = MetricCollector::connect()
             .await
@@ -36,6 +89,19 @@ impl<P: LlmProvider> Router<P> {
         }
     }
 
+    /// Routes a prompt to the best available provider and returns the response.
+    ///
+    /// Uses the routing policy to select a provider, sends the prompt,
+    /// records metrics, and updates the policy based on success/failure.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` - The input text to send to the LLM
+    /// * `_max_tokens` - Maximum tokens for the response (currently unused)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the selected provider fails to generate a response.
     pub async fn route(&mut self, prompt: &str, _max_tokens: usize) -> anyhow::Result<String> {
         let provider_index = self.policy.select_index(self.providers.len());
         let selected_provider = &self.providers[provider_index];

@@ -1,0 +1,666 @@
+openapi: 3.0.0
+info:
+  title: Merlin AI Router API
+  description: API endpoints for model selection, feedback submission, and user preference management
+  version: 1.0.0
+  contact:
+    name: Merlin AI Router Team
+    email: team@merlin.ai
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Development server
+  - url: https://api.merlin.ai/v1
+    description: Production server
+
+paths:
+  /modelSelect:
+    post:
+      tags:
+        - Model Selection
+      summary: Select and execute a model for prompt processing
+      description: |
+        Submit a prompt to the intelligent routing system for model selection and processing.
+        The system will automatically select the best model based on performance metrics and user preferences.
+      operationId: selectModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelSelectionRequest'
+            examples:
+              basicRequest:
+                summary: Basic model selection
+                value:
+                  user_id: "user123"
+                  prompt: "Explain quantum computing in simple terms"
+                  max_tokens: 500
+                  temperature: 0.7
+              advancedRequest:
+                summary: Advanced model selection with preferences
+                value:
+                  user_id: "user123"
+                  prompt: "Write a Python function to calculate fibonacci numbers"
+                  max_tokens: 300
+                  temperature: 0.5
+                  model_preferences:
+                    preferred_models: ["gpt-4", "claude-3"]
+                    excluded_models: ["gpt-3.5"]
+                    max_cost: 0.02
+                  context:
+                    session_id: "session_456"
+                    source_application: "web_app"
+      responses:
+        '200':
+          description: Successful model selection and response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelSelectionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /feedback:
+    post:
+      tags:
+        - Feedback
+      summary: Submit feedback on model performance
+      description: |
+        Submit feedback on model performance to improve the intelligent routing system.
+        Feedback is used to continuously train and optimize model selection algorithms.
+      operationId: submitFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackSubmission'
+            examples:
+              ratingFeedback:
+                summary: Rating-only feedback
+                value:
+                  user_id: "user123"
+                  model_name: "gpt-4"
+                  rating: 5
+                  category: "Accuracy"
+              detailedFeedback:
+                summary: Detailed feedback with text
+                value:
+                  user_id: "user123"
+                  request_id: "req_789"
+                  model_name: "claude-3"
+                  rating: 4
+                  feedback_text: "The response was helpful but could be more concise"
+                  category: "Helpfulness"
+      responses:
+        '201':
+          description: Feedback submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackSubmission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /preferences/userPreferenceCreate:
+    post:
+      tags:
+        - User Preferences
+      summary: Create a new user preference
+      description: Create a new user preference for customizing model selection and system behavior.
+      operationId: createUserPreference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPreferenceCreate'
+            examples:
+              modelPreference:
+                summary: Create model preference
+                value:
+                  user_id: "user123"
+                  preference_key: "preferred_models"
+                  preference_value: ["gpt-4", "claude-3"]
+                  category: "ModelSelection"
+              formattingPreference:
+                summary: Create formatting preference
+                value:
+                  user_id: "user123"
+                  preference_key: "response_style"
+                  preference_value: "detailed"
+                  category: "ResponseFormatting"
+      responses:
+        '201':
+          description: Preference created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreference'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Preference already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /preferences/userPreferenceUpdate:
+    put:
+      tags:
+        - User Preferences
+      summary: Update an existing user preference
+      description: Update an existing user preference. Supports optimistic locking with version control.
+      operationId: updateUserPreference
+      parameters:
+        - name: preference_id
+          in: path
+          required: true
+          description: ID of the preference to update
+          schema:
+            type: string
+            format: uuid
+        - name: If-Match
+          in: header
+          required: false
+          description: Version number for optimistic locking
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPreferenceUpdate'
+      responses:
+        '200':
+          description: Preference updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreference'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Version conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /preferences/userPreferenceDelete:
+    delete:
+      tags:
+        - User Preferences
+      summary: Delete a user preference
+      description: Delete a user preference. This action cannot be undone.
+      operationId: deleteUserPreference
+      parameters:
+        - name: preference_id
+          in: path
+          required: true
+          description: ID of the preference to delete
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Preference deleted successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  schemas:
+    ModelSelectionRequest:
+      type: object
+      required:
+        - user_id
+        - prompt
+      properties:
+        user_id:
+          type: string
+          description: User identifier
+          example: "user123"
+        prompt:
+          type: string
+          description: The prompt to be processed
+          example: "Explain quantum computing in simple terms"
+          minLength: 1
+          maxLength: 10000
+        max_tokens:
+          type: integer
+          description: Maximum number of tokens in response
+          minimum: 1
+          maximum: 32000
+          example: 500
+        temperature:
+          type: number
+          description: Creativity parameter (0.0-1.0)
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.7
+        model_preferences:
+          $ref: '#/components/schemas/ModelPreferences'
+        context:
+          $ref: '#/components/schemas/RequestContext'
+
+    ModelPreferences:
+      type: object
+      properties:
+        preferred_models:
+          type: array
+          items:
+            type: string
+          description: List of preferred models
+          example: ["gpt-4", "claude-3"]
+        excluded_models:
+          type: array
+          items:
+            type: string
+          description: List of models to exclude
+          example: ["gpt-3.5"]
+        max_cost:
+          type: number
+          description: Maximum cost per request
+          minimum: 0.0
+          example: 0.02
+        min_performance:
+          type: number
+          description: Minimum performance score (0.0-1.0)
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.8
+
+    RequestContext:
+      type: object
+      properties:
+        session_id:
+          type: string
+          description: Session identifier
+          example: "session_456"
+        source_application:
+          type: string
+          description: Source application name
+          example: "web_app"
+        user_agent:
+          type: string
+          description: User agent string
+          example: "Mozilla/5.0..."
+        ip_address:
+          type: string
+          description: Client IP address
+          example: "192.168.1.1"
+
+    ModelSelectionResponse:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        selected_model:
+          type: string
+          description: Selected model name
+          example: "gpt-4"
+        response:
+          type: string
+          description: Generated response
+          example: "Quantum computing is a revolutionary approach..."
+        tokens_used:
+          type: integer
+          description: Number of tokens consumed
+          minimum: 0
+          example: 150
+        processing_time:
+          type: integer
+          description: Processing time in milliseconds
+          minimum: 0
+          example: 850
+        confidence_score:
+          type: number
+          description: Model confidence score (0.0-1.0)
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.92
+        metadata:
+          $ref: '#/components/schemas/ResponseMetadata'
+
+    FeedbackSubmission:
+      type: object
+      required:
+        - user_id
+        - model_name
+        - rating
+        - category
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Feedback identifier (auto-generated)
+          readOnly: true
+        user_id:
+          type: string
+          description: User identifier
+          example: "user123"
+        request_id:
+          type: string
+          format: uuid
+          description: Related request identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        model_name:
+          type: string
+          description: Name of the model being rated
+          example: "gpt-4"
+        rating:
+          type: integer
+          description: Rating from 1 (poor) to 5 (excellent)
+          minimum: 1
+          maximum: 5
+          example: 5
+        feedback_text:
+          type: string
+          description: Detailed feedback text
+          maxLength: 1000
+          example: "The response was very helpful and accurate"
+        category:
+          $ref: '#/components/schemas/FeedbackCategory'
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          readOnly: true
+
+    FeedbackCategory:
+      type: string
+      enum:
+        - Accuracy
+        - Relevance
+        - Coherence
+        - Helpfulness
+        - Performance
+        - Safety
+        - Other
+      description: Category of feedback
+
+    UserPreference:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Preference identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        user_id:
+          type: string
+          description: User identifier
+          example: "user123"
+        preference_key:
+          type: string
+          description: Preference key
+          example: "preferred_models"
+        preference_value:
+          description: Preference value
+          oneOf:
+            - type: string
+            - type: integer
+            - type: number
+            - type: boolean
+            - type: array
+              items:
+                type: string
+            - type: object
+          example: ["gpt-4", "claude-3"]
+        category:
+          $ref: '#/components/schemas/PreferenceCategory'
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          readOnly: true
+        version:
+          type: integer
+          description: Version number for optimistic locking
+          readOnly: true
+          example: 1
+
+    UserPreferenceCreate:
+      type: object
+      required:
+        - user_id
+        - preference_key
+        - preference_value
+        - category
+      properties:
+        user_id:
+          type: string
+          description: User identifier
+          example: "user123"
+        preference_key:
+          type: string
+          description: Preference key
+          example: "preferred_models"
+        preference_value:
+          description: Preference value
+          oneOf:
+            - type: string
+            - type: integer
+            - type: number
+            - type: boolean
+            - type: array
+              items:
+                type: string
+            - type: object
+          example: ["gpt-4", "claude-3"]
+        category:
+          $ref: '#/components/schemas/PreferenceCategory'
+
+    UserPreferenceUpdate:
+      type: object
+      required:
+        - preference_value
+      properties:
+        preference_value:
+          description: Updated preference value
+          oneOf:
+            - type: string
+            - type: integer
+            - type: number
+            - type: boolean
+            - type: array
+              items:
+                type: string
+            - type: object
+          example: ["gpt-4", "claude-3", "gemini-pro"]
+
+    PreferenceCategory:
+      type: string
+      enum:
+        - ModelSelection
+        - ResponseFormatting
+        - ContentFiltering
+        - PrivacySettings
+        - NotificationSettings
+        - InterfaceSettings
+        - Other
+      description: Category of preference
+
+    ResponseMetadata:
+      type: object
+      properties:
+        server_version:
+          type: string
+          description: Server version
+          example: "1.0.0"
+        processing_time_ms:
+          type: integer
+          description: Processing time in milliseconds
+          example: 150
+        request_timestamp:
+          type: string
+          format: date-time
+          description: Request timestamp
+          example: "2024-01-01T12:00:00Z"
+        response_timestamp:
+          type: string
+          format: date-time
+          description: Response timestamp
+          example: "2024-01-01T12:00:01Z"
+        rate_limit_remaining:
+          type: integer
+          description: Remaining rate limit
+          example: 99
+
+    APIError:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Error code
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Error message
+          example: "Invalid request parameters"
+        details:
+          type: string
+          description: Additional error details
+          example: "Field 'user_id' is required"
+        field_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+
+    FieldError:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Field name
+          example: "user_id"
+        message:
+          type: string
+          description: Error message
+          example: "Field is required"
+        code:
+          type: string
+          description: Error code
+          example: "REQUIRED_FIELD"
+
+    StandardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Request success status
+          example: true
+        data:
+          description: Response data
+        error:
+          $ref: '#/components/schemas/APIError'
+        metadata:
+          $ref: '#/components/schemas/ResponseMetadata'
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StandardResponse'
+
+tags:
+  - name: Model Selection
+    description: Model selection and execution endpoints
+  - name: Feedback
+    description: Feedback submission endpoints
+  - name: User Preferences
+    description: User preference management endpoints
+
+security:
+  - ApiKeyAuth: []
+
+securitySchemes:
+  ApiKeyAuth:
+    type: apiKey
+    in: header
+    name: Authorization
+    description: API key authentication header
+
+externalDocs:
+  description: Merlin AI Router Documentation
+  url: https://docs.merlin.ai

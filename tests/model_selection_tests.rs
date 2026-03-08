@@ -1,6 +1,12 @@
 // tests/model_selection_tests.rs
+<<<<<<< HEAD
 use merlin::api::{ModelSelectRequest, Message, OptimizationTarget, DomainCategory};
 use merlin::api::model_select::UserPreferences;
+||||||| 87d1c1f
+use merlin::api::{ModelSelectRequest, Message, UserPreferences, OptimizationTarget, DomainCategory};
+=======
+use merlin::api::{ModelSelectRequest, Message, ModelUserPreferences, OptimizationTarget, DomainCategory};
+>>>>>>> 110274beff6a7b9aaaad000da2af5580a57b0e72
 use merlin::IntelligentModelSelector;
 
 #[tokio::test]
@@ -19,7 +25,7 @@ async fn test_model_selection_quality_optimization() {
                 "claude-3-opus-20240229".to_string(),
                 "llama-3-70b".to_string(),
             ],
-            preferences: Some(UserPreferences {
+            preferences: Some(ModelUserPreferences {
                 optimize_for: Some(OptimizationTarget::Quality),
                 max_tokens: Some(2000),
                 user_id: None,
@@ -60,7 +66,7 @@ async fn test_model_selection_cost_optimization() {
                 "claude-3-sonnet-20240229".to_string(), 
                 "llama-3-70b".to_string(),
             ],
-            preferences: Some(UserPreferences {
+            preferences: Some(ModelUserPreferences {
                 optimize_for: Some(OptimizationTarget::Cost),
                 max_tokens: Some(100),
                 user_id: None,

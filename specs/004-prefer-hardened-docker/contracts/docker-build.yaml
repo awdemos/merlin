@@ -1,0 +1,338 @@
+openapi: 3.0.0
+info:
+  title: Docker Build API
+  description: API for building and managing hardened Docker containers for Merlin AI Router
+  version: 1.0.0
+
+paths:
+  /api/v1/docker/build:
+    post:
+      summary: Build hardened Docker container
+      description: Build a security-hardened Docker container for Merlin deployment
+      operationId: buildDockerContainer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DockerBuildRequest'
+      responses:
+        '200':
+          description: Container build initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DockerBuildResponse'
+        '400':
+          description: Invalid build configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Build process failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/docker/scan:
+    post:
+      summary: Scan container for vulnerabilities
+      description: Perform security scanning on a Docker container image
+      operationId: scanContainer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityScanRequest'
+      responses:
+        '200':
+          description: Security scan results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityScanResponse'
+        '404':
+          description: Container image not found
+        '500':
+          description: Scan process failed
+
+  /api/v1/docker/validate:
+    post:
+      summary: Validate container configuration
+      description: Validate Docker container configuration against security requirements
+      operationId: validateContainerConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigurationValidationRequest'
+      responses:
+        '200':
+          description: Configuration validation results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigurationValidationResponse'
+        '400':
+          description: Invalid configuration format
+
+  /api/v1/docker/health:
+    get:
+      summary: Container health status
+      description: Get health status of running Merlin container
+      operationId: getContainerHealth
+      responses:
+        '200':
+          description: Container health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Container unhealthy or unavailable
+
+components:
+  schemas:
+    DockerBuildRequest:
+      type: object
+      required:
+        - image_name
+        - base_image
+        - environment
+      properties:
+        image_name:
+          type: string
+          description: Target image name
+          example: "merlin:latest"
+        base_image:
+          type: string
+          enum: [distroless, alpine, wolfi]
+          description: Base image type
+          example: "distroless"
+        environment:
+          type: string
+          enum: [development, staging, production]
+          description: Target environment
+          example: "production"
+        security_profile:
+          $ref: '#/components/schemas/SecurityProfile'
+        resource_limits:
+          $ref: '#/components/schemas/ResourceLimits'
+        build_args:
+          type: object
+          additionalProperties:
+            type: string
+          description: Build-time arguments
+
+    SecurityProfile:
+      type: object
+      properties:
+        read_only_filesystem:
+          type: boolean
+          default: true
+        no_new_privileges:
+          type: boolean
+          default: true
+        drop_capabilities:
+          type: array
+          items:
+            type: string
+          default: ["ALL"]
+        security_opt:
+          type: array
+          items:
+            type: string
+          default: ["no-new-privileges"]
+
+    ResourceLimits:
+      type: object
+      properties:
+        memory_limit:
+          type: string
+          pattern: '^\d+[MG]?$'
+          example: "512m"
+        cpu_limit:
+          type: number
+          minimum: 0.1
+          maximum: 4.0
+          example: 1.0
+        pids_limit:
+          type: integer
+          minimum: 100
+          maximum: 10000
+          example: 1000
+
+    DockerBuildResponse:
+      type: object
+      properties:
+        build_id:
+          type: string
+          description: Unique build identifier
+        status:
+          type: string
+          enum: [pending, building, completed, failed]
+        image_name:
+          type: string
+        build_logs_url:
+          type: string
+          description: URL to build logs
+        estimated_time_remaining:
+          type: integer
+          description: Estimated build time in seconds
+
+    SecurityScanRequest:
+      type: object
+      required:
+        - image_name
+      properties:
+        image_name:
+          type: string
+          description: Image to scan
+        severity_threshold:
+          type: string
+          enum: [critical, high, medium, low]
+          default: "high"
+        ignore_vulnerabilities:
+          type: array
+          items:
+            type: string
+          description: CVE IDs to ignore
+
+    SecurityScanResponse:
+      type: object
+      properties:
+        scan_id:
+          type: string
+        image_name:
+          type: string
+        scan_timestamp:
+          type: string
+          format: date-time
+        vulnerabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Vulnerability'
+        compliance_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        passed:
+          type: boolean
+
+    Vulnerability:
+      type: object
+      properties:
+        cve_id:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        package:
+          type: string
+        installed_version:
+          type: string
+        fixed_version:
+          type: string
+        description:
+          type: string
+
+    ConfigurationValidationRequest:
+      type: object
+      required:
+        - configuration
+      properties:
+        configuration:
+          $ref: '#/components/schemas/DockerContainerConfig'
+
+    DockerContainerConfig:
+      type: object
+      properties:
+        image_name:
+          type: string
+        user_name:
+          type: string
+          default: "merlin"
+        security_profile:
+          $ref: '#/components/schemas/SecurityProfile'
+        resource_limits:
+          $ref: '#/components/schemas/ResourceLimits'
+        health_monitor:
+          $ref: '#/components/schemas/HealthMonitor'
+
+    HealthMonitor:
+      type: object
+      properties:
+        endpoint:
+          type: string
+          default: "/health"
+        interval_seconds:
+          type: integer
+          minimum: 5
+          maximum: 300
+          default: 30
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          default: 10
+
+    ConfigurationValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        violations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationViolation'
+        recommendations:
+          type: array
+          items:
+            type: string
+
+    ValidationViolation:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+        severity:
+          type: string
+          enum: [error, warning, info]
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy, starting]
+        timestamp:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+        memory_usage_mb:
+          type: number
+        cpu_usage_percent:
+          type: number
+        last_health_check:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        error_code:
+          type: string
+          description: Error code for programmatic handling

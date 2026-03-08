@@ -1,0 +1,106 @@
+[Unit]
+Description=Merlin AI Router Service
+Documentation=https://github.com/awdemos/merlin
+After=network.target
+Wants=network.target
+# Redis is required for A/B testing, preferences, and metrics
+After=redis.service
+Wants=redis.service
+
+[Service]
+# Service type and startup behavior
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=30
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=5
+
+# Execution configuration
+EnvironmentFile=-/etc/merlin/merlin.env
+ExecStart=/usr/local/bin/merlin serve
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGTERM
+
+# User and security configuration
+DynamicUser=yes
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+RemoveIPC=true
+PrivateTmp=true
+
+# Filesystem access permissions
+ReadWritePaths=/var/lib/merlin
+ReadOnlyPaths=/etc/merlin
+
+# Capability restrictions
+CapabilityBoundingSet=
+AmbientCapabilities=
+SecureBits=noroot-locked
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+
+# Network restrictions
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+PrivateNetwork=false
+IPAddressAllow=localhost
+IPAddressDeny=any
+SocketBindAllow=tcp:4242
+SocketBindDeny=any
+
+# System call filtering
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# Resource limits
+MemoryMax=512M
+MemoryHigh=256M
+MemoryMin=8M
+MemorySwapMax=0
+LimitNOFILE=65536
+LimitNPROC=4096
+LimitCORE=0
+LimitFSIZE=0
+
+# CPU and process scheduling
+Nice=10
+CPUSchedulingPolicy=idle
+CPUSchedulingPriority=19
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+
+# Temporary file restrictions
+PrivateTmp=true
+TemporaryFileSystem=/var/tmp:size=100M
+TemporaryFileSystem=/tmp:size=100M
+
+# Logging and output
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=merlin
+
+# Runtime directory
+RuntimeDirectory=merlin
+RuntimeDirectoryMode=0750
+
+# Process management
+TasksMax=100
+Delegate=yes
+
+# Optional: Enable systemd watchdog (if supported by application)
+# WatchdogSec=30
+# WatchdogSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

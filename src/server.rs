@@ -8,7 +8,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use crate::preferences::models::{OptimizationTarget as ModelsOptimizationTarget};
 
-// Helper function to convert between API and models OptimizationTarget
 fn convert_optimization_target(api_target: &crate::api::OptimizationTarget) -> ModelsOptimizationTarget {
     match api_target {
         crate::api::OptimizationTarget::Quality => ModelsOptimizationTarget::Quality,
@@ -17,33 +16,45 @@ fn convert_optimization_target(api_target: &crate::api::OptimizationTarget) -> M
         crate::api::OptimizationTarget::Balanced => ModelsOptimizationTarget::Balanced,
     }
 }
+
 use std::sync::Arc;
 use crate::{IntelligentModelSelector, FeedbackProcessor, api::{ModelSelectRequest, ModelSelectResponse, FeedbackRequest, FeedbackResponse}};
 use crate::providers::{MerlinConfig, ProviderRegistry, CapabilityLoader};
 
+/// Request payload for the chat endpoint.
 #[derive(Deserialize)]
 pub struct ChatRequest {
+    /// The prompt text to send to the LLM.
     pub prompt: String,
+    /// Maximum tokens for the response (optional).
     pub max_tokens: Option<usize>,
 }
 
+/// Response from the chat endpoint containing the generated text.
 #[derive(Serialize)]
 pub struct ChatResponse {
+    /// The generated response text.
     pub response: String,
+    /// Name of the provider that generated the response.
     pub provider: String,
 }
 
+/// Error response payload for API errors.
 #[derive(Serialize)]
 pub struct ErrorResponse {
+    /// Human-readable error message.
     pub error: String,
 }
 
+/// Creates a basic Axum router with health, chat, and metrics endpoints.
+///
+/// For full functionality including model selection and feedback,
+/// use [`create_server_with_state`] instead.
 pub fn create_server() -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/chat", post(handle_chat))
         .route("/metrics", get(get_metrics))
-        // Note: modelSelect and feedback endpoints require state, use create_server_with_state instead
 }
 
 pub mod ab_testing;
@@ -51,11 +62,19 @@ pub mod enhanced_model_select;
 pub mod preferences;
 pub mod openai_compatible;
 
+/// Shared application state for the Merlin server.
+///
+/// Contains all the services needed for request handling including
+/// model selection, feedback processing, user preferences, and A/B testing.
 #[derive(Clone)]
 pub struct AppState {
+    /// Intelligent model selector for choosing the best LLM.
     pub model_selector: Arc<tokio::sync::Mutex<IntelligentModelSelector>>,
+    /// Feedback processor for handling user ratings.
     pub feedback_processor: Arc<tokio::sync::Mutex<FeedbackProcessor>>,
+    /// User preference management state.
     pub preference_server_state: Arc<crate::server::preferences::PreferenceServerState>,
+    /// A/B testing experiment runner.
     pub experiment_runner: Arc<tokio::sync::Mutex<crate::ab_testing::experiment::ExperimentRunner>>,
     pub provider_registry: Arc<ProviderRegistry>,
     pub capability_loader: Arc<tokio::sync::Mutex<CapabilityLoader>>,
@@ -67,6 +86,14 @@ impl AsRef<Arc<crate::preferences::PreferenceManager>> for AppState {
     }
 }
 
+/// Creates a fully-featured Axum router with all endpoints and state.
+///
+/// Initializes all services (model selector, feedback processor, preferences, A/B testing)
+/// and returns a router ready for production use.
+///
+/// # Errors
+///
+/// Returns an error if initialization of any service fails.
 pub async fn create_server_with_state() -> anyhow::Result<Router> {
     // Load configuration
     let config_path = std::env::var("MERLIN_CONFIG").unwrap_or_else(|_| "merlin.toml".to_string());

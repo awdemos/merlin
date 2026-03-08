@@ -1,8 +1,11 @@
+//! Ollama provider implementation for local LLM inference.
+
 use crate::{LlmProvider, providers::ModelCapabilities};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value;
 
+/// LLM provider for Ollama's local inference API.
 pub struct OllamaProvider {
     client: Client,
     endpoint: String,
@@ -10,6 +13,12 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
+    /// Creates a new Ollama provider with the specified endpoint and model.
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - The Ollama API endpoint (e.g., "http://localhost:11434")
+    /// * `model` - The model name to use for inference
     pub fn new(endpoint: String, model: String) -> Self {
         Self {
             client: Client::new(),

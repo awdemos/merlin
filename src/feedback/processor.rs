@@ -136,8 +136,8 @@ impl FeedbackProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{FeedbackRequest, FeedbackType};
-    use std::collections::HashMap;
+    use crate::api::FeedbackType;
+    
 
     #[tokio::test]
     async fn test_feedback_to_reward_score() {

@@ -1,0 +1,133 @@
+# Network policies for Merlin AI Router
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: merlin-api-network-policy
+  namespace: merlin-system
+  labels:
+    app: merlin-ai-router
+    tier: system
+    component: api
+spec:
+  podSelector:
+    matchLabels:
+      app: merlin-ai-router
+      tier: system
+      component: api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: merlin-system
+    - podSelector:
+        matchLabels:
+          app: redis
+          tier: cache
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 8081
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: merlin-system
+    - podSelector:
+        matchLabels:
+          app: redis
+          tier: cache
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []  # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# Redis network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-network-policy
+  namespace: merlin-system
+  labels:
+    app: redis
+    tier: cache
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+      tier: cache
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: merlin-system
+    - podSelector:
+        matchLabels:
+          app: merlin-ai-router
+          tier: system
+    ports:
+    - protocol: TCP
+      port: 6379
+  egress:
+  - to: []  # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# Monitoring network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-network-policy
+  namespace: merlin-system
+  labels:
+    tier: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      tier: monitoring
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: merlin-system
+    - podSelector:
+        matchLabels:
+          app: merlin-ai-router
+          tier: system
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus
+    - protocol: TCP
+      port: 3000  # Grafana
+  egress:
+  - to: []  # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# Default deny all policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: merlin-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
