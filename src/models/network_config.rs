@@ -142,16 +142,21 @@ impl NetworkConfig {
     /// Validate the network configuration
     pub fn validate(&self) -> Result<(), NetworkConfigError> {
         if self.mode.is_empty() {
-            return Err(NetworkConfigError::InvalidMode("Network mode cannot be empty".to_string()));
+            return Err(NetworkConfigError::InvalidMode(
+                "Network mode cannot be empty".to_string(),
+            ));
         }
 
         // Validate network mode
         match self.mode.as_str() {
-            "bridge" | "host" | "none" => {},
+            "bridge" | "host" | "none" => {}
             _ => {
                 // Custom network name - validate format
                 if !self.is_valid_network_name(&self.mode) {
-                    return Err(NetworkConfigError::InvalidMode(format!("Invalid network name: {}", self.mode)));
+                    return Err(NetworkConfigError::InvalidMode(format!(
+                        "Invalid network name: {}",
+                        self.mode
+                    )));
                 }
             }
         }
@@ -159,27 +164,39 @@ impl NetworkConfig {
         // Validate IP addresses if provided
         if let Some(ref ip) = self.ip_address {
             if !self.is_valid_ip_address(ip) {
-                return Err(NetworkConfigError::InvalidIpAddress(format!("Invalid IP address: {}", ip)));
+                return Err(NetworkConfigError::InvalidIpAddress(format!(
+                    "Invalid IP address: {}",
+                    ip
+                )));
             }
         }
 
         if let Some(ref ipv6) = self.ipv6_address {
             if !self.is_valid_ipv6_address(ipv6) {
-                return Err(NetworkConfigError::InvalidIpAddress(format!("Invalid IPv6 address: {}", ipv6)));
+                return Err(NetworkConfigError::InvalidIpAddress(format!(
+                    "Invalid IPv6 address: {}",
+                    ipv6
+                )));
             }
         }
 
         // Validate MAC address if provided
         if let Some(ref mac) = self.mac_address {
             if !self.is_valid_mac_address(mac) {
-                return Err(NetworkConfigError::InvalidMacAddress(format!("Invalid MAC address: {}", mac)));
+                return Err(NetworkConfigError::InvalidMacAddress(format!(
+                    "Invalid MAC address: {}",
+                    mac
+                )));
             }
         }
 
         // Validate DNS servers
         for dns in &self.dns_servers {
             if !self.is_valid_ip_address(dns) {
-                return Err(NetworkConfigError::InvalidDnsServer(format!("Invalid DNS server: {}", dns)));
+                return Err(NetworkConfigError::InvalidDnsServer(format!(
+                    "Invalid DNS server: {}",
+                    dns
+                )));
             }
         }
 
@@ -191,13 +208,13 @@ impl NetworkConfig {
         // Validate isolation level compatibility
         if self.mode == "host" && self.isolation_level != NetworkIsolationLevel::Host {
             return Err(NetworkConfigError::IncompatibleSettings(
-                "Host network mode requires host isolation level".to_string()
+                "Host network mode requires host isolation level".to_string(),
             ));
         }
 
         if self.mode == "none" && !self.port_mappings.is_empty() {
             return Err(NetworkConfigError::IncompatibleSettings(
-                "None network mode cannot have port mappings".to_string()
+                "None network mode cannot have port mappings".to_string(),
             ));
         }
 
@@ -206,9 +223,11 @@ impl NetworkConfig {
 
     /// Check if network name is valid
     fn is_valid_network_name(&self, name: &str) -> bool {
-        !name.is_empty() &&
-        name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') &&
-        name.len() <= 64
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            && name.len() <= 64
     }
 
     /// Check if IP address is valid
@@ -359,7 +378,7 @@ impl fmt::Display for NetworkConfig {
 }
 
 /// Network isolation levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkIsolationLevel {
     /// Host network access
     Host,
@@ -435,24 +454,36 @@ impl PortMapping {
     /// Validate the port mapping
     pub fn validate(&self) -> Result<(), NetworkConfigError> {
         if self.container_port == 0 {
-            return Err(NetworkConfigError::InvalidPort("Container port cannot be zero".to_string()));
+            return Err(NetworkConfigError::InvalidPort(
+                "Container port cannot be zero".to_string(),
+            ));
         }
 
         if self.container_port > 65535 {
-            return Err(NetworkConfigError::InvalidPort("Container port must be <= 65535".to_string()));
+            return Err(NetworkConfigError::InvalidPort(
+                "Container port must be <= 65535".to_string(),
+            ));
         }
 
         if self.host_port > 65535 {
-            return Err(NetworkConfigError::InvalidPort("Host port must be <= 65535".to_string()));
+            return Err(NetworkConfigError::InvalidPort(
+                "Host port must be <= 65535".to_string(),
+            ));
         }
 
         if self.protocol != "tcp" && self.protocol != "udp" {
-            return Err(NetworkConfigError::InvalidProtocol(format!("Invalid protocol: {}", self.protocol)));
+            return Err(NetworkConfigError::InvalidProtocol(format!(
+                "Invalid protocol: {}",
+                self.protocol
+            )));
         }
 
         if let Some(ref ip) = self.host_ip {
             if !self.is_valid_ip_address(ip) {
-                return Err(NetworkConfigError::InvalidIpAddress(format!("Invalid host IP: {}", ip)));
+                return Err(NetworkConfigError::InvalidIpAddress(format!(
+                    "Invalid host IP: {}",
+                    ip
+                )));
             }
         }
 
@@ -472,9 +503,15 @@ impl PortMapping {
             args.push("-P".to_string());
         } else {
             let mapping = if let Some(ref ip) = self.host_ip {
-                format!("{}:{}:{}/{}", ip, self.host_port, self.container_port, self.protocol)
+                format!(
+                    "{}:{}:{}/{}",
+                    ip, self.host_port, self.container_port, self.protocol
+                )
             } else {
-                format!("{}:{}/{}", self.host_port, self.container_port, self.protocol)
+                format!(
+                    "{}:{}/{}",
+                    self.host_port, self.container_port, self.protocol
+                )
             };
             args.push("-p".to_string());
             args.push(mapping);
@@ -590,19 +627,28 @@ mod tests {
     #[test]
     fn test_validate_invalid_mode() {
         let config = NetworkConfig::new("".to_string());
-        assert!(matches!(config.validate(), Err(NetworkConfigError::InvalidMode(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(NetworkConfigError::InvalidMode(_))
+        ));
     }
 
     #[test]
     fn test_validate_invalid_ip() {
         let config = NetworkConfig::bridge().with_ip_address("invalid".to_string());
-        assert!(matches!(config.validate(), Err(NetworkConfigError::InvalidIpAddress(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(NetworkConfigError::InvalidIpAddress(_))
+        ));
     }
 
     #[test]
     fn test_validate_host_compatibility() {
         let config = NetworkConfig::host().with_isolation(NetworkIsolationLevel::Internal);
-        assert!(matches!(config.validate(), Err(NetworkConfigError::IncompatibleSettings(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(NetworkConfigError::IncompatibleSettings(_))
+        ));
     }
 
     #[test]
@@ -635,8 +681,7 @@ mod tests {
     #[test]
     fn test_security_score() {
         let secure = NetworkConfig::none();
-        let insecure = NetworkConfig::host()
-            .add_port_mapping(PortMapping::new(80, 8080));
+        let insecure = NetworkConfig::host().add_port_mapping(PortMapping::new(80, 8080));
 
         assert!(secure.security_score() > insecure.security_score());
     }

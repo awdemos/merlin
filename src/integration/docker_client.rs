@@ -373,8 +373,9 @@ impl DockerClient {
             })?;
 
         if output.status.success() {
-            let stats_str = String::from_utf8_lossy(&output.stdout).trim();
-            let parts: Vec<&str> = stats_str.split(',').collect();
+            let stats_str = String::from_utf8_lossy(&output.stdout);
+            let stats_trimmed = stats_str.trim();
+            let parts: Vec<&str> = stats_trimmed.split(',').collect();
 
             if parts.len() >= 5 {
                 let cpu_percent = parts[0].trim_end_matches('%').parse::<f64>().unwrap_or(0.0);
@@ -500,7 +501,8 @@ impl DockerClient {
             } else {
                 mem_str.parse::<f64>().unwrap_or(0.0) / (1024.0 * 1024.0)
             }
-        } as u64
+        } as u64;
+        mem_bytes
     }
 
     /// Extract image ID from build output
@@ -515,6 +517,25 @@ impl DockerClient {
             }
         }
         None
+    }
+
+    /// Ping Docker daemon to check connectivity
+    pub async fn ping(&self) -> Result<std::time::Duration, DockerConfigError> {
+        let start = std::time::Instant::now();
+        let output = Command::new("docker")
+            .arg("version")
+            .arg("--format")
+            .arg("{{.Server.Version}}")
+            .output()
+            .await
+            .map_err(|e| DockerConfigError::BuildError(format!("Failed to ping Docker: {}", e)))?;
+
+        if output.status.success() {
+            Ok(start.elapsed())
+        } else {
+            let error_output = String::from_utf8_lossy(&output.stderr);
+            Err(DockerConfigError::BuildError(format!("Docker ping failed: {}", error_output)))
+        }
     }
 }
 

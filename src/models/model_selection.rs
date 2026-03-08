@@ -13,7 +13,11 @@ pub struct ModelSelectionRequest {
     #[validate(range(min = 1, max = 8192, message = "Max tokens must be between 1 and 8192"))]
     pub max_tokens: Option<u32>,
 
-    #[validate(range(min = 0.0, max = 2.0, message = "Temperature must be between 0.0 and 2.0"))]
+    #[validate(range(
+        min = 0.0,
+        max = 2.0,
+        message = "Temperature must be between 0.0 and 2.0"
+    ))]
     pub temperature: Option<f64>,
 
     pub model_preferences: Option<ModelPreferences>,
@@ -110,7 +114,11 @@ impl ModelSelectionRequest {
                 .into_iter()
                 .flat_map(|(field, errors)| {
                     errors.into_iter().map(move |error| {
-                        format!("{}: {}", field, error.message.as_ref().unwrap_or(&"invalid value".into()))
+                        format!(
+                            "{}: {}",
+                            field,
+                            error.message.as_ref().unwrap_or(&"invalid value".into())
+                        )
                     })
                 })
                 .collect();

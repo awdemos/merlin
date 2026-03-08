@@ -3,6 +3,14 @@ use std::collections::HashMap;
 use std::fmt;
 use uuid::Uuid;
 
+use crate::models::health_check_config::HealthCheckError;
+use crate::models::network_config::NetworkConfigError;
+use crate::models::resource_limits::ResourceLimitsError;
+use crate::models::security_profile::SecurityProfileError;
+use crate::models::{
+    HealthCheckConfig, NetworkConfig, ResourceLimits, SecurityProfile, TmpfsMount, VolumeMount,
+};
+
 /// Deployment environment configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentEnvironment {
@@ -186,7 +194,9 @@ impl DeploymentEnvironment {
     /// Validate the environment configuration
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.name.is_empty() {
-            return Err(DeploymentEnvironmentError::InvalidName("Environment name cannot be empty".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidName(
+                "Environment name cannot be empty".to_string(),
+            ));
         }
 
         // Validate environment configuration
@@ -239,7 +249,7 @@ impl DeploymentEnvironment {
                 if let Some(ref limits) = self.resource_limits {
                     if limits.memory_mb > 2048 {
                         return Err(DeploymentEnvironmentError::InvalidConfiguration(
-                            "Development environment should not exceed 2GB memory".to_string()
+                            "Development environment should not exceed 2GB memory".to_string(),
                         ));
                     }
                 }
@@ -249,7 +259,7 @@ impl DeploymentEnvironment {
                 if let Some(ref limits) = self.resource_limits {
                     if limits.memory_mb > 4096 {
                         return Err(DeploymentEnvironmentError::InvalidConfiguration(
-                            "Staging environment should not exceed 4GB memory".to_string()
+                            "Staging environment should not exceed 4GB memory".to_string(),
                         ));
                     }
                 }
@@ -258,28 +268,28 @@ impl DeploymentEnvironment {
                 // Production environments should have resource limits
                 if self.resource_limits.is_none() {
                     return Err(DeploymentEnvironmentError::InvalidConfiguration(
-                        "Production environment must have resource limits".to_string()
+                        "Production environment must have resource limits".to_string(),
                     ));
                 }
 
                 // Production environments should have security profiles
                 if self.security_profile.is_none() {
                     return Err(DeploymentEnvironmentError::InvalidConfiguration(
-                        "Production environment must have security profile".to_string()
+                        "Production environment must have security profile".to_string(),
                     ));
                 }
 
                 // Production environments should have health checks
                 if self.health_check.is_none() {
                     return Err(DeploymentEnvironmentError::InvalidConfiguration(
-                        "Production environment must have health checks".to_string()
+                        "Production environment must have health checks".to_string(),
                     ));
                 }
 
                 // Production environments should have backups
                 if self.backup_config.is_none() {
                     return Err(DeploymentEnvironmentError::InvalidConfiguration(
-                        "Production environment must have backup configuration".to_string()
+                        "Production environment must have backup configuration".to_string(),
                     ));
                 }
             }
@@ -290,14 +300,17 @@ impl DeploymentEnvironment {
 
     /// Check if this environment is ready for deployment
     pub fn is_ready_for_deployment(&self) -> bool {
-        self.validate().is_ok() &&
-        self.deployment_status != DeploymentStatus::Deploying &&
-        self.deployment_status != DeploymentStatus::Failed
+        self.validate().is_ok()
+            && self.deployment_status != DeploymentStatus::Deploying
+            && self.deployment_status != DeploymentStatus::Failed
     }
 
     /// Check if this environment is currently deployed
     pub fn is_deployed(&self) -> bool {
-        matches!(self.deployment_status, DeploymentStatus::Deployed | DeploymentStatus::Deploying)
+        matches!(
+            self.deployment_status,
+            DeploymentStatus::Deployed | DeploymentStatus::Deploying
+        )
     }
 
     /// Generate environment-specific Docker run arguments
@@ -350,10 +363,16 @@ impl DeploymentEnvironment {
 
         // Add build arguments based on environment type
         args.push("--build-arg".to_string());
-        args.push(format!("RUST_ENV={}", self.environment_type.to_string().to_lowercase()));
+        args.push(format!(
+            "RUST_ENV={}",
+            self.environment_type.to_string().to_lowercase()
+        ));
 
         args.push("--build-arg".to_string());
-        args.push(format!("MERLIN_ENV={}", self.environment_type.to_string().to_lowercase()));
+        args.push(format!(
+            "MERLIN_ENV={}",
+            self.environment_type.to_string().to_lowercase()
+        ));
 
         // Add custom build arguments
         for (key, value) in &self.configuration.build_args {
@@ -374,6 +393,8 @@ impl DeploymentEnvironment {
             DeploymentStatus::Deploying => score -= 5,
             DeploymentStatus::Failed => score -= 30,
             DeploymentStatus::NotDeployed => score -= 20,
+            DeploymentStatus::Stopping => score -= 10,
+            DeploymentStatus::Stopped => score -= 15,
         }
 
         // Resource usage affects score
@@ -415,13 +436,14 @@ impl DeploymentEnvironment {
 
     /// Check if environment meets compliance requirements
     pub fn meets_compliance_requirements(&self) -> bool {
-        self.compliance_requirements.is_empty() ||
-        self.compliance_requirements.iter().all(|req| req.met)
+        self.compliance_requirements.is_empty()
+            || self.compliance_requirements.iter().all(|req| req.met)
     }
 
     /// Clone and adapt for a different environment type
     pub fn adapt_for_environment(&self, new_type: EnvironmentType) -> Self {
         let mut adapted = self.clone();
+        let new_type_clone = new_type.clone();
         adapted.environment_type = new_type;
         adapted.id = Uuid::new_v4();
         adapted.created_at = chrono::Utc::now();
@@ -430,7 +452,7 @@ impl DeploymentEnvironment {
         adapted.deployment_status = DeploymentStatus::NotDeployed;
 
         // Adapt resource limits based on environment type
-        match new_type {
+        match new_type_clone {
             EnvironmentType::Development => {
                 adapted.resource_limits = Some(ResourceLimits::minimal());
                 adapted.security_profile = Some(SecurityProfile::minimal());
@@ -567,11 +589,15 @@ impl RegistryConfig {
     /// Validate registry configuration
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.url.is_empty() {
-            return Err(DeploymentEnvironmentError::InvalidRegistry("Registry URL cannot be empty".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidRegistry(
+                "Registry URL cannot be empty".to_string(),
+            ));
         }
 
         if self.namespace.is_empty() {
-            return Err(DeploymentEnvironmentError::InvalidRegistry("Registry namespace cannot be empty".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidRegistry(
+                "Registry namespace cannot be empty".to_string(),
+            ));
         }
 
         Ok(())
@@ -623,11 +649,15 @@ impl CleanupPolicy {
     /// Validate cleanup policy
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.max_images == 0 {
-            return Err(DeploymentEnvironmentError::InvalidCleanup("Max images must be greater than 0".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidCleanup(
+                "Max images must be greater than 0".to_string(),
+            ));
         }
 
         if self.max_age_days == 0 {
-            return Err(DeploymentEnvironmentError::InvalidCleanup("Max age days must be greater than 0".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidCleanup(
+                "Max age days must be greater than 0".to_string(),
+            ));
         }
 
         Ok(())
@@ -672,19 +702,27 @@ impl AutoScalingConfig {
     /// Validate auto-scaling configuration
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.min_instances == 0 {
-            return Err(DeploymentEnvironmentError::InvalidScaling("Min instances must be greater than 0".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidScaling(
+                "Min instances must be greater than 0".to_string(),
+            ));
         }
 
         if self.max_instances <= self.min_instances {
-            return Err(DeploymentEnvironmentError::InvalidScaling("Max instances must be greater than min instances".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidScaling(
+                "Max instances must be greater than min instances".to_string(),
+            ));
         }
 
         if self.target_cpu_utilization == 0 || self.target_cpu_utilization > 100 {
-            return Err(DeploymentEnvironmentError::InvalidScaling("Target CPU utilization must be between 1-100%".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidScaling(
+                "Target CPU utilization must be between 1-100%".to_string(),
+            ));
         }
 
         if self.target_memory_utilization == 0 || self.target_memory_utilization > 100 {
-            return Err(DeploymentEnvironmentError::InvalidScaling("Target memory utilization must be between 1-100%".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidScaling(
+                "Target memory utilization must be between 1-100%".to_string(),
+            ));
         }
 
         Ok(())
@@ -730,11 +768,15 @@ impl MonitoringConfig {
     /// Validate monitoring configuration
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.metrics_interval == 0 {
-            return Err(DeploymentEnvironmentError::InvalidMonitoring("Metrics interval must be greater than 0".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidMonitoring(
+                "Metrics interval must be greater than 0".to_string(),
+            ));
         }
 
         if self.metrics_interval > 3600 {
-            return Err(DeploymentEnvironmentError::InvalidMonitoring("Metrics interval must be less than 3600 seconds".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidMonitoring(
+                "Metrics interval must be less than 3600 seconds".to_string(),
+            ));
         }
 
         // Validate alert configuration
@@ -802,29 +844,39 @@ impl AlertChannel {
     /// Validate alert channel
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.name.is_empty() {
-            return Err(DeploymentEnvironmentError::InvalidAlert("Channel name cannot be empty".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidAlert(
+                "Channel name cannot be empty".to_string(),
+            ));
         }
 
         // Validate channel type specific configuration
         match self.channel_type {
             AlertChannelType::Email => {
                 if !self.configuration.contains_key("to") {
-                    return Err(DeploymentEnvironmentError::InvalidAlert("Email channel requires 'to' configuration".to_string()));
+                    return Err(DeploymentEnvironmentError::InvalidAlert(
+                        "Email channel requires 'to' configuration".to_string(),
+                    ));
                 }
             }
             AlertChannelType::Slack => {
                 if !self.configuration.contains_key("webhook_url") {
-                    return Err(DeploymentEnvironmentError::InvalidAlert("Slack channel requires 'webhook_url' configuration".to_string()));
+                    return Err(DeploymentEnvironmentError::InvalidAlert(
+                        "Slack channel requires 'webhook_url' configuration".to_string(),
+                    ));
                 }
             }
             AlertChannelType::PagerDuty => {
                 if !self.configuration.contains_key("service_key") {
-                    return Err(DeploymentEnvironmentError::InvalidAlert("PagerDuty channel requires 'service_key' configuration".to_string()));
+                    return Err(DeploymentEnvironmentError::InvalidAlert(
+                        "PagerDuty channel requires 'service_key' configuration".to_string(),
+                    ));
                 }
             }
             AlertChannelType::Webhook => {
                 if !self.configuration.contains_key("url") {
-                    return Err(DeploymentEnvironmentError::InvalidAlert("Webhook channel requires 'url' configuration".to_string()));
+                    return Err(DeploymentEnvironmentError::InvalidAlert(
+                        "Webhook channel requires 'url' configuration".to_string(),
+                    ));
                 }
             }
         }
@@ -868,15 +920,21 @@ impl AlertRule {
     /// Validate alert rule
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.name.is_empty() {
-            return Err(DeploymentEnvironmentError::InvalidAlert("Rule name cannot be empty".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidAlert(
+                "Rule name cannot be empty".to_string(),
+            ));
         }
 
         if self.condition.is_empty() {
-            return Err(DeploymentEnvironmentError::InvalidAlert("Rule condition cannot be empty".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidAlert(
+                "Rule condition cannot be empty".to_string(),
+            ));
         }
 
         if self.duration == 0 {
-            return Err(DeploymentEnvironmentError::InvalidAlert("Rule duration must be greater than 0".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidAlert(
+                "Rule duration must be greater than 0".to_string(),
+            ));
         }
 
         Ok(())
@@ -927,7 +985,9 @@ impl LoggingConfig {
     /// Validate logging configuration
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.retention_days == 0 {
-            return Err(DeploymentEnvironmentError::InvalidLogging("Retention days must be greater than 0".to_string()));
+            return Err(DeploymentEnvironmentError::InvalidLogging(
+                "Retention days must be greater than 0".to_string(),
+            ));
         }
 
         Ok(())
@@ -1014,15 +1074,21 @@ impl BackupConfig {
     pub fn validate(&self) -> Result<(), DeploymentEnvironmentError> {
         if self.enabled {
             if self.schedule.is_empty() {
-                return Err(DeploymentEnvironmentError::InvalidBackup("Backup schedule cannot be empty".to_string()));
+                return Err(DeploymentEnvironmentError::InvalidBackup(
+                    "Backup schedule cannot be empty".to_string(),
+                ));
             }
 
             if self.storage_location.is_empty() {
-                return Err(DeploymentEnvironmentError::InvalidBackup("Backup storage location cannot be empty".to_string()));
+                return Err(DeploymentEnvironmentError::InvalidBackup(
+                    "Backup storage location cannot be empty".to_string(),
+                ));
             }
 
             if self.retention_days == 0 {
-                return Err(DeploymentEnvironmentError::InvalidBackup("Backup retention days must be greater than 0".to_string()));
+                return Err(DeploymentEnvironmentError::InvalidBackup(
+                    "Backup retention days must be greater than 0".to_string(),
+                ));
             }
         }
 
@@ -1050,7 +1116,7 @@ pub struct ComplianceRequirement {
 }
 
 /// Deployment status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DeploymentStatus {
     NotDeployed,
     Deploying,
@@ -1104,6 +1170,30 @@ pub enum DeploymentEnvironmentError {
     InvalidBackup(String),
 }
 
+impl From<ResourceLimitsError> for DeploymentEnvironmentError {
+    fn from(err: ResourceLimitsError) -> Self {
+        DeploymentEnvironmentError::InvalidConfiguration(err.to_string())
+    }
+}
+
+impl From<SecurityProfileError> for DeploymentEnvironmentError {
+    fn from(err: SecurityProfileError) -> Self {
+        DeploymentEnvironmentError::InvalidConfiguration(err.to_string())
+    }
+}
+
+impl From<NetworkConfigError> for DeploymentEnvironmentError {
+    fn from(err: NetworkConfigError) -> Self {
+        DeploymentEnvironmentError::InvalidConfiguration(err.to_string())
+    }
+}
+
+impl From<HealthCheckError> for DeploymentEnvironmentError {
+    fn from(err: HealthCheckError) -> Self {
+        DeploymentEnvironmentError::InvalidConfiguration(err.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1134,7 +1224,10 @@ mod tests {
     fn test_add_environment_variable() {
         let env = DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development)
             .add_environment_variable("TEST_VAR".to_string(), "test_value".to_string());
-        assert_eq!(env.environment_variables.get("TEST_VAR"), Some(&"test_value".to_string()));
+        assert_eq!(
+            env.environment_variables.get("TEST_VAR"),
+            Some(&"test_value".to_string())
+        );
     }
 
     #[test]
@@ -1147,7 +1240,10 @@ mod tests {
     #[test]
     fn test_validate_production_requirements() {
         let env = DeploymentEnvironment::new("test".to_string(), EnvironmentType::Production);
-        assert!(matches!(env.validate(), Err(DeploymentEnvironmentError::InvalidConfiguration(_))));
+        assert!(matches!(
+            env.validate(),
+            Err(DeploymentEnvironmentError::InvalidConfiguration(_))
+        ));
     }
 
     #[test]
@@ -1155,7 +1251,8 @@ mod tests {
         let ready = DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development)
             .with_resource_limits(ResourceLimits::minimal());
 
-        let not_ready = DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development);
+        let not_ready =
+            DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development);
 
         assert!(ready.is_ready_for_deployment());
         assert!(!not_ready.is_ready_for_deployment());
@@ -1176,9 +1273,10 @@ mod tests {
     #[test]
     fn test_health_score() {
         let deployed = DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development);
-        let deployed_with_limits = DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development)
-            .with_resource_limits(ResourceLimits::minimal())
-            .with_security_profile(SecurityProfile::standard());
+        let deployed_with_limits =
+            DeploymentEnvironment::new("test".to_string(), EnvironmentType::Development)
+                .with_resource_limits(ResourceLimits::minimal())
+                .with_security_profile(SecurityProfile::standard());
 
         assert!(deployed_with_limits.health_score() > deployed.health_score());
     }

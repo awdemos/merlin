@@ -146,7 +146,11 @@ impl FeedbackSubmission {
                 .into_iter()
                 .flat_map(|(field, errors)| {
                     errors.into_iter().map(move |error| {
-                        format!("{}: {}", field, error.message.as_ref().unwrap_or(&"invalid value".into()))
+                        format!(
+                            "{}: {}",
+                            field,
+                            error.message.as_ref().unwrap_or(&"invalid value".into())
+                        )
                     })
                 })
                 .collect();
@@ -340,7 +344,10 @@ mod tests {
     #[test]
     fn test_feedback_category_conversion() {
         assert_eq!(FeedbackCategory::Accuracy.as_str(), "Accuracy");
-        assert_eq!(FeedbackCategory::from_str("Accuracy"), Some(FeedbackCategory::Accuracy));
+        assert_eq!(
+            FeedbackCategory::from_str("Accuracy"),
+            Some(FeedbackCategory::Accuracy)
+        );
         assert_eq!(FeedbackCategory::from_str("Invalid"), None);
     }
 

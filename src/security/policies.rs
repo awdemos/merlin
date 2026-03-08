@@ -7,10 +7,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use crate::models::container_config::DockerContainerConfig;
+use crate::models::docker_config::{DockerContainerConfig, DockerConfigError};
 use crate::models::security_scan_config::{SecurityScanConfig, ComplianceStandard};
 use super::hardening::SecurityControl;
-use super::docker_client::DockerConfigError;
 
 /// Security policy types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

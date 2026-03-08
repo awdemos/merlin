@@ -7,13 +7,12 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
-use crate::models::container_config::DockerContainerConfig;
+use crate::models::docker_config::{DockerContainerConfig, DockerConfigError};
 use crate::models::container_state::{ContainerState, ContainerStatus};
 use crate::models::security_scan_config::SecurityScanConfig;
 use crate::integration::docker_client::DockerClient;
 use crate::integration::security_scanner::SecurityScanner;
 use crate::integration::resource_monitor::ResourceMonitor;
-use super::docker_client::DockerConfigError;
 
 /// Health check result with detailed status information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +193,7 @@ impl HealthMonitor {
         let test_config = SecurityScanConfig::builder()
             .image_name("nginx:latest".to_string())
             .scan_types(vec![crate::models::security_scan_config::ScanType::Vulnerability])
-            .severity_threshold(Some("LOW".to_string()))
+            .severity_threshold("LOW".to_string())
             .output_format(crate::models::security_scan_config::OutputFormat::Json)
             .build()
             .unwrap();
@@ -317,7 +316,7 @@ impl HealthMonitor {
         let test_content = "health_check_test";
         let test_path = "/tmp/merlin_health_check.tmp";
 
-        let result = async {
+        let result: Result<(), std::io::Error> = async {
             // Write test
             tokio::fs::write(test_path, test_content).await?;
 

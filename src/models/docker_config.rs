@@ -2,6 +2,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::models::resource_limits::ResourceLimitsError;
+use crate::models::{HealthCheckConfig, NetworkConfig, ResourceLimits, TmpfsMount, VolumeMount};
+
+/// Host configuration for Docker container
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostConfig {
+    /// Memory limit in bytes
+    pub memory: Option<u64>,
+
+    /// CPU shares (relative weight)
+    pub cpu_shares: Option<u64>,
+
+    /// PIDs limit
+    pub pids_limit: Option<u64>,
+}
+
+impl Default for HostConfig {
+    fn default() -> Self {
+        Self {
+            memory: None,
+            cpu_shares: None,
+            pids_limit: None,
+        }
+    }
+}
+
 /// Docker container configuration for building and deploying Merlin
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockerContainerConfig {
@@ -38,6 +64,24 @@ pub struct DockerContainerConfig {
     /// Tmpfs mounts
     pub tmpfs_mounts: Vec<TmpfsMount>,
 
+    /// Security options (e.g., seccomp, apparmor)
+    pub security_options: Vec<String>,
+
+    /// Read-only root filesystem
+    pub read_only: Option<bool>,
+
+    /// User to run container as
+    pub user: Option<String>,
+
+    /// Capabilities to drop
+    pub cap_drop: Option<Vec<String>>,
+
+    /// Privileged mode
+    pub privileged: Option<bool>,
+
+    /// Host-specific configuration
+    pub host_config: HostConfig,
+
     /// Unique identifier for this configuration
     pub id: Uuid,
 
@@ -63,6 +107,12 @@ impl Default for DockerContainerConfig {
             environment: HashMap::new(),
             volumes: Vec::new(),
             tmpfs_mounts: Vec::new(),
+            security_options: Vec::new(),
+            read_only: None,
+            user: None,
+            cap_drop: None,
+            privileged: None,
+            host_config: HostConfig::default(),
             id: Uuid::new_v4(),
             created_at: now,
             updated_at: now,
@@ -107,21 +157,34 @@ impl DockerContainerConfig {
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), DockerConfigError> {
         if self.image_name.is_empty() {
-            return Err(DockerConfigError::InvalidImageName("Image name cannot be empty".to_string()));
+            return Err(DockerConfigError::InvalidImageName(
+                "Image name cannot be empty".to_string(),
+            ));
         }
 
         if self.dockerfile_path.is_empty() {
-            return Err(DockerConfigError::InvalidDockerfile("Dockerfile path cannot be empty".to_string()));
+            return Err(DockerConfigError::InvalidDockerfile(
+                "Dockerfile path cannot be empty".to_string(),
+            ));
         }
 
         // Validate image name format
-        if !self.image_name.chars().all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '_' || c == '.') {
-            return Err(DockerConfigError::InvalidImageName("Invalid image name format".to_string()));
+        if !self
+            .image_name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '_' || c == '.')
+        {
+            return Err(DockerConfigError::InvalidImageName(
+                "Invalid image name format".to_string(),
+            ));
         }
 
         // Validate Dockerfile path
         if !std::path::Path::new(&self.dockerfile_path).exists() {
-            return Err(DockerConfigError::DockerfileNotFound(format!("Dockerfile not found: {}", self.dockerfile_path)));
+            return Err(DockerConfigError::DockerfileNotFound(format!(
+                "Dockerfile not found: {}",
+                self.dockerfile_path
+            )));
         }
 
         // Validate resource limits if present
@@ -138,12 +201,15 @@ impl DockerContainerConfig {
     }
 
     /// Validate security context
-    fn validate_security_context(&self, security: &serde_json::Value) -> Result<(), DockerConfigError> {
+    fn validate_security_context(
+        &self,
+        security: &serde_json::Value,
+    ) -> Result<(), DockerConfigError> {
         if let Some(user) = security.get("user") {
             if let Some(user_str) = user.as_str() {
                 if user_str == "root" || user_str == "0" {
                     return Err(DockerConfigError::SecurityViolation(
-                        "Container should not run as root user".to_string()
+                        "Container should not run as root user".to_string(),
                     ));
                 }
             }
@@ -153,7 +219,7 @@ impl DockerContainerConfig {
             if let Some(ro) = read_only.as_bool() {
                 if !ro {
                     return Err(DockerConfigError::SecurityViolation(
-                        "Container should have read-only filesystem".to_string()
+                        "Container should have read-only filesystem".to_string(),
                     ));
                 }
             }
@@ -164,7 +230,11 @@ impl DockerContainerConfig {
 
     /// Generate Docker build command
     pub fn build_command(&self) -> Vec<String> {
-        let mut cmd = vec!["build".to_string(), "-t".to_string(), self.image_name.clone()];
+        let mut cmd = vec![
+            "build".to_string(),
+            "-t".to_string(),
+            self.image_name.clone(),
+        ];
 
         cmd.push("-f".to_string());
         cmd.push(self.dockerfile_path.clone());
@@ -209,7 +279,7 @@ impl DockerContainerConfig {
                 cmd.push(format!("{}m", limits.memory_mb));
             }
 
-            if limits.cpu_shares > 0 {
+            if limits.cpu_shares > 0.0 {
                 cmd.push("--cpus".to_string());
                 cmd.push(format!("{}", limits.cpu_shares));
             }
@@ -229,13 +299,22 @@ impl DockerContainerConfig {
         // Add volumes
         for volume in &self.volumes {
             cmd.push("-v".to_string());
-            cmd.push(format!("{}:{}", volume.source, volume.destination));
+            cmd.push(format!(
+                "{}:{}",
+                volume.source.display(),
+                volume.destination.display()
+            ));
         }
 
         // Add tmpfs mounts
         for tmpfs in &self.tmpfs_mounts {
             cmd.push("--tmpfs".to_string());
-            cmd.push(format!("{}:size={},{}", tmpfs.mount_point, tmpfs.size, tmpfs.options));
+            cmd.push(format!(
+                "{}:size={},{}",
+                tmpfs.mount_point.display(),
+                tmpfs.size,
+                tmpfs.options
+            ));
         }
 
         // Add health check if present
@@ -273,16 +352,31 @@ pub enum DockerConfigError {
     #[error("Security violation: {0}")]
     SecurityViolation(String),
 
+    #[error("Security error: {0}")]
+    SecurityError(String),
+
     #[error("Resource limits error: {0}")]
     ResourceLimitsError(String),
 
     #[error("Validation error: {0}")]
     ValidationError(String),
+
+    #[error("Validation: {0}")]
+    Validation(String),
+
+    #[error("Build error: {0}")]
+    BuildError(String),
 }
 
 impl From<ResourceLimitsError> for DockerConfigError {
     fn from(err: ResourceLimitsError) -> Self {
         DockerConfigError::ResourceLimitsError(err.to_string())
+    }
+}
+
+impl From<prometheus::Error> for DockerConfigError {
+    fn from(err: prometheus::Error) -> Self {
+        DockerConfigError::BuildError(err.to_string())
     }
 }
 
@@ -301,7 +395,8 @@ mod tests {
 
     #[test]
     fn test_new_config() {
-        let config = DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
+        let config =
+            DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
         assert_eq!(config.image_name, "test:latest");
         assert_eq!(config.dockerfile_path, "Dockerfile");
     }
@@ -311,28 +406,39 @@ mod tests {
         let mut config = DockerContainerConfig::default();
         config.add_build_arg("RUST_ENV".to_string(), "production".to_string());
         assert_eq!(config.build_args.len(), 1);
-        assert_eq!(config.build_args[0], ("RUST_ENV".to_string(), "production".to_string()));
+        assert_eq!(
+            config.build_args[0],
+            ("RUST_ENV".to_string(), "production".to_string())
+        );
     }
 
     #[test]
     fn test_validate_empty_image_name() {
         let config = DockerContainerConfig::default();
         let result = config.validate();
-        assert!(matches!(result, Err(DockerConfigError::InvalidImageName(_))));
+        assert!(matches!(
+            result,
+            Err(DockerConfigError::InvalidImageName(_))
+        ));
     }
 
     #[test]
     fn test_validate_root_user() {
-        let mut config = DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
+        let mut config =
+            DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
         config.security_context = Some(serde_json::json!({"user": "root"}));
 
         let result = config.validate();
-        assert!(matches!(result, Err(DockerConfigError::SecurityViolation(_))));
+        assert!(matches!(
+            result,
+            Err(DockerConfigError::SecurityViolation(_))
+        ));
     }
 
     #[test]
     fn test_build_command() {
-        let mut config = DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
+        let mut config =
+            DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
         config.add_build_arg("RUST_ENV".to_string(), "production".to_string());
 
         let cmd = config.build_command();
@@ -348,7 +454,8 @@ mod tests {
 
     #[test]
     fn test_run_command() {
-        let mut config = DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
+        let mut config =
+            DockerContainerConfig::new("test:latest".to_string(), "Dockerfile".to_string());
         config.add_environment("RUST_ENV".to_string(), "production".to_string());
 
         let cmd = config.run_command(Some("test-container".to_string()));

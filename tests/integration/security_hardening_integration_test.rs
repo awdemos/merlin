@@ -4,7 +4,7 @@ use merlin::security::hardening::{
     SecurityHardeningService, SecurityHardeningConfig, SecurityControl, SecurityProfile,
     ResourceLimits, SecurityContext, CapabilityConfig, NetworkMode, HardeningResult
 };
-use merlin::models::container_config::DockerContainerConfig;
+use merlin::models::docker_config::DockerContainerConfig;
 use merlin::models::security_scan_config::ComplianceStandard;
 
 #[tokio::test]

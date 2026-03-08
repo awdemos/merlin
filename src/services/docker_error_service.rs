@@ -382,7 +382,7 @@ impl DockerErrorService {
         Fut: std::future::Future<Output = Result<T, DockerConfigError>>,
     {
         let mut retry_count = 0;
-        let start_time = std::time::Instant();
+        let start_time = std::time::Instant::now();
 
         loop {
             match operation_func().await {
@@ -394,10 +394,14 @@ impl DockerErrorService {
                 Err(e) => {
                     let error_type = match e {
                         DockerConfigError::ValidationError(_) => "validation_error",
-                        DockerConfigError::BuildError(_) => "build_error",
+                        DockerConfigError::InvalidDockerfile(_) => "build_error",
+                        DockerConfigError::SecurityViolation(_) => "security_error",
                         DockerConfigError::SecurityError(_) => "security_error",
-                        DockerConfigError::ConfigurationError(_) => "configuration_error",
-                        _ => "unknown_error",
+                        DockerConfigError::ResourceLimitsError(_) => "resource_error",
+                        DockerConfigError::InvalidImageName(_) => "image_error",
+                        DockerConfigError::DockerfileNotFound(_) => "file_not_found",
+                        DockerConfigError::Validation(_) => "validation_error",
+                        DockerConfigError::BuildError(_) => "build_error",
                     };
 
                     // Log the error
@@ -459,7 +463,7 @@ impl DockerErrorService {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, DockerConfigError>>,
     {
-        let start_time = std::time::Instant();
+        let start_time = std::time::Instant::now();
         let span = span!(Level::INFO, "docker_operation", operation = %operation);
         let _enter = span.enter();
 
@@ -476,10 +480,14 @@ impl DockerErrorService {
 
                 let error_type = match e {
                     DockerConfigError::ValidationError(_) => "validation_error",
-                    DockerConfigError::BuildError(_) => "build_error",
+                    DockerConfigError::InvalidDockerfile(_) => "build_error",
+                    DockerConfigError::SecurityViolation(_) => "security_error",
                     DockerConfigError::SecurityError(_) => "security_error",
-                    DockerConfigError::ConfigurationError(_) => "configuration_error",
-                    _ => "unknown_error",
+                    DockerConfigError::ResourceLimitsError(_) => "resource_error",
+                    DockerConfigError::InvalidImageName(_) => "image_error",
+                    DockerConfigError::DockerfileNotFound(_) => "file_not_found",
+                    DockerConfigError::Validation(_) => "validation_error",
+                    DockerConfigError::BuildError(_) => "build_error",
                 };
 
                 let mut details = HashMap::new();

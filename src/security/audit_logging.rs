@@ -7,12 +7,11 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use crate::models::container_config::DockerContainerConfig;
+use crate::models::docker_config::{DockerContainerConfig, DockerConfigError};
 use super::access_control::{User, Permission};
-use super::docker_client::DockerConfigError;
 
 /// Audit event types
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuditEventType {
     Authentication,
     Authorization,
@@ -28,8 +27,27 @@ pub enum AuditEventType {
     Custom(String),
 }
 
+impl std::fmt::Display for AuditEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuditEventType::Authentication => write!(f, "Authentication"),
+            AuditEventType::Authorization => write!(f, "Authorization"),
+            AuditEventType::ConfigurationChange => write!(f, "ConfigurationChange"),
+            AuditEventType::ContainerOperation => write!(f, "ContainerOperation"),
+            AuditEventType::SecurityScan => write!(f, "SecurityScan"),
+            AuditEventType::PolicyViolation => write!(f, "PolicyViolation"),
+            AuditEventType::Deployment => write!(f, "Deployment"),
+            AuditEventType::SystemOperation => write!(f, "SystemOperation"),
+            AuditEventType::DataAccess => write!(f, "DataAccess"),
+            AuditEventType::AdminAction => write!(f, "AdminAction"),
+            AuditEventType::Compliance => write!(f, "Compliance"),
+            AuditEventType::Custom(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 /// Audit event severity
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuditSeverity {
     Debug,
     Info,
@@ -38,8 +56,20 @@ pub enum AuditSeverity {
     Critical,
 }
 
+impl std::fmt::Display for AuditSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuditSeverity::Debug => write!(f, "Debug"),
+            AuditSeverity::Info => write!(f, "Info"),
+            AuditSeverity::Warning => write!(f, "Warning"),
+            AuditSeverity::Error => write!(f, "Error"),
+            AuditSeverity::Critical => write!(f, "Critical"),
+        }
+    }
+}
+
 /// Audit event status
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuditStatus {
     Success,
     Failure,
@@ -206,11 +236,20 @@ pub enum AlertType {
 }
 
 /// Audit subscriber for real-time notifications
-#[derive(Debug, Clone)]
 pub struct AuditSubscriber {
     pub id: Uuid,
-    pub callback: Box<dyn Fn(AuditEvent) + Send + Sync>,
+    pub callback: Arc<dyn Fn(AuditEvent) + Send + Sync>,
     pub filter: Option<AuditQuery>,
+}
+
+impl Clone for AuditSubscriber {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            callback: Arc::clone(&self.callback),
+            filter: self.filter.clone(),
+        }
+    }
 }
 
 /// Compliance checker
@@ -414,7 +453,7 @@ impl AuditService {
             details: {
                 let mut scan_details = details;
                 scan_details.insert("vulnerabilities_found".to_string(), serde_json::Value::Number(serde_json::Number::from(vulnerabilities_found)));
-                scan_details.insert("compliance_score".to_string(), serde_json::Value::Number(serde_json::Number::from(compliance_score)));
+                scan_details.insert("compliance_score".to_string(), serde_json::json!(compliance_score));
                 scan_details
             },
             ip_address,
@@ -422,11 +461,9 @@ impl AuditService {
             correlation_id: None,
             parent_event_id: None,
             duration_ms: None,
-            result: Some(serde_json::Value::Object({
-                let mut result = HashMap::new();
-                result.insert("vulnerabilities_found".to_string(), serde_json::Value::Number(serde_json::Number::from(vulnerabilities_found)));
-                result.insert("compliance_score".to_string(), serde_json::Value::Number(serde_json::Number::from(compliance_score)));
-                result
+            result: Some(serde_json::json!({
+                "vulnerabilities_found": vulnerabilities_found,
+                "compliance_score": compliance_score
             })),
             error_message: None,
             compliance_tags: vec!["security".to_string(), "compliance".to_string(), "scanning".to_string()],
@@ -484,34 +521,33 @@ impl AuditService {
             },
         };
 
-        // Count by various dimensions
+        let mut resource_counts: HashMap<String, u64> = HashMap::new();
+        let mut action_counts: HashMap<String, u64> = HashMap::new();
+
         for event in &events {
-            // By type
             *stats.events_by_type.entry(event.event_type.clone()).or_insert(0) += 1;
-
-            // By severity
             *stats.events_by_severity.entry(event.severity.clone()).or_insert(0) += 1;
-
-            // By status
             *stats.events_by_status.entry(event.status.clone()).or_insert(0) += 1;
 
-            // By user
             if let Some(username) = &event.username {
                 *stats.events_by_user.entry(username.clone()).or_insert(0) += 1;
             }
 
-            // Resources and actions
-            *stats.top_resources.entry(event.resource.clone()).or_insert(0) += 1;
-            *stats.top_actions.entry(event.action.clone()).or_insert(0) += 1;
+            *resource_counts.entry(event.resource.clone()).or_insert(0) += 1;
+            *action_counts.entry(event.action.clone()).or_insert(0) += 1;
         }
 
-        // Sort top resources and actions
-        stats.top_resources.sort_by(|a, b| b.1.cmp(&a.1));
-        stats.top_actions.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut resources: Vec<(String, u64)> = resource_counts.into_iter().collect();
+        let mut actions: Vec<(String, u64)> = action_counts.into_iter().collect();
+        
+        resources.sort_by(|a, b| b.1.cmp(&a.1));
+        actions.sort_by(|a, b| b.1.cmp(&a.1));
 
-        // Keep top 10
-        stats.top_resources.truncate(10);
-        stats.top_actions.truncate(10);
+        resources.truncate(10);
+        actions.truncate(10);
+        
+        stats.top_resources = resources;
+        stats.top_actions = actions;
 
         Ok(stats)
     }
@@ -539,9 +575,7 @@ impl AuditService {
         let subscriber_id = Uuid::new_v4();
         let subscriber = AuditSubscriber {
             id: subscriber_id,
-            callback: Box::new(|_event| {
-                // In a real implementation, this would send notifications
-                // For now, we'll just log to console
+            callback: Arc::new(|_event| {
                 println!("Audit event received");
             }),
             filter,

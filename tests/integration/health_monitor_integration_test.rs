@@ -6,7 +6,7 @@ use merlin::integration::health_monitor::{
 use merlin::integration::docker_client::DockerClient;
 use merlin::integration::security_scanner::SecurityScanner;
 use merlin::integration::resource_monitor::ResourceMonitor;
-use merlin::models::container_config::DockerContainerConfig;
+use merlin::models::docker_config::DockerContainerConfig;
 use merlin::models::security_scan_config::SecurityScanConfig;
 
 #[tokio::test]

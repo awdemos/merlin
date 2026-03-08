@@ -1,9 +1,11 @@
-// src/providers/openai.rs
+//! OpenAI provider implementation.
+
 use crate::LlmProvider;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value;
 
+/// LLM provider for OpenAI's chat completions API.
 pub struct OpenAiProvider {
     client: Client,
     api_key: String,

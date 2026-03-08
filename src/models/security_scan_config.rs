@@ -1,8 +1,8 @@
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
-use chrono::Datelike;
 
 /// Security scanning configuration for Docker containers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +90,11 @@ impl SecurityScanConfig {
         config
     }
 
+    /// Create a builder for SecurityScanConfig
+    pub fn builder() -> SecurityScanConfigBuilder {
+        SecurityScanConfigBuilder::default()
+    }
+
     /// Set description
     pub fn with_description(mut self, description: String) -> Self {
         self.description = description;
@@ -153,15 +158,21 @@ impl SecurityScanConfig {
     /// Validate the scan configuration
     pub fn validate(&self) -> Result<(), SecurityScanError> {
         if self.name.is_empty() {
-            return Err(SecurityScanError::InvalidName("Name cannot be empty".to_string()));
+            return Err(SecurityScanError::InvalidName(
+                "Name cannot be empty".to_string(),
+            ));
         }
 
         if self.image_name.is_empty() && self.container_name.is_none() {
-            return Err(SecurityScanError::InvalidTarget("Either image_name or container_name must be specified".to_string()));
+            return Err(SecurityScanError::InvalidTarget(
+                "Either image_name or container_name must be specified".to_string(),
+            ));
         }
 
         if self.scan_types.is_empty() {
-            return Err(SecurityScanError::InvalidConfiguration("At least one scan type must be specified".to_string()));
+            return Err(SecurityScanError::InvalidConfiguration(
+                "At least one scan type must be specified".to_string(),
+            ));
         }
 
         // Validate schedule
@@ -253,7 +264,10 @@ impl SecurityScanConfig {
 
     /// Generate Hadolint command for Dockerfile scanning
     fn generate_hadolint_command(&self) -> Vec<String> {
-        vec!["hadolint".to_string(), "docker/Dockerfile.hardened".to_string()]
+        vec![
+            "hadolint".to_string(),
+            "docker/Dockerfile.hardened".to_string(),
+        ]
     }
 
     /// Generate compliance scanning command
@@ -450,16 +464,22 @@ impl ScanSchedule {
         match self.frequency {
             ScheduleFrequency::Weekly => {
                 if self.day_of_week.is_none() {
-                    return Err(SecurityScanError::InvalidSchedule("Day of week required for weekly schedule".to_string()));
+                    return Err(SecurityScanError::InvalidSchedule(
+                        "Day of week required for weekly schedule".to_string(),
+                    ));
                 }
             }
             ScheduleFrequency::Monthly => {
                 if self.day_of_month.is_none() {
-                    return Err(SecurityScanError::InvalidSchedule("Day of month required for monthly schedule".to_string()));
+                    return Err(SecurityScanError::InvalidSchedule(
+                        "Day of month required for monthly schedule".to_string(),
+                    ));
                 }
                 if let Some(day) = self.day_of_month {
                     if day < 1 || day > 31 {
-                        return Err(SecurityScanError::InvalidSchedule("Day of month must be between 1-31".to_string()));
+                        return Err(SecurityScanError::InvalidSchedule(
+                            "Day of month must be between 1-31".to_string(),
+                        ));
                     }
                 }
             }
@@ -476,7 +496,9 @@ impl ScanSchedule {
         }
 
         let now = chrono::Utc::now().naive_utc();
-        let run_time = self.run_time.unwrap_or_else(|| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let run_time = self
+            .run_time
+            .unwrap_or_else(|| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
 
         match self.frequency {
             ScheduleFrequency::Hourly => {
@@ -484,7 +506,10 @@ impl ScanSchedule {
                 if next > now {
                     Some(chrono::DateTime::from_utc(next, chrono::Utc))
                 } else {
-                    Some(chrono::DateTime::from_utc(now.date().and_time(run_time) + chrono::Duration::hours(1), chrono::Utc))
+                    Some(chrono::DateTime::from_utc(
+                        now.date().and_time(run_time) + chrono::Duration::hours(1),
+                        chrono::Utc,
+                    ))
                 }
             }
             ScheduleFrequency::Daily => {
@@ -492,7 +517,10 @@ impl ScanSchedule {
                 if next > now {
                     Some(chrono::DateTime::from_utc(next, chrono::Utc))
                 } else {
-                    Some(chrono::DateTime::from_utc(now.date().and_time(run_time) + chrono::Duration::days(1), chrono::Utc))
+                    Some(chrono::DateTime::from_utc(
+                        now.date().and_time(run_time) + chrono::Duration::days(1),
+                        chrono::Utc,
+                    ))
                 }
             }
             ScheduleFrequency::Weekly => {
@@ -521,7 +549,9 @@ impl ScanSchedule {
                     current = current.succ();
                     // Handle months with fewer days
                     if current.day() > day && current.month() % 12 == 1 {
-                        current = chrono::NaiveDate::from_ymd_opt(current.year(), current.month(), 1).unwrap();
+                        current =
+                            chrono::NaiveDate::from_ymd_opt(current.year(), current.month(), 1)
+                                .unwrap();
                     }
                 }
             }
@@ -581,7 +611,9 @@ impl SeverityThresholds {
     /// Validate thresholds
     pub fn validate(&self) -> Result<(), SecurityScanError> {
         if self.minimum_score > 100 {
-            return Err(SecurityScanError::InvalidThreshold("Minimum score must be <= 100".to_string()));
+            return Err(SecurityScanError::InvalidThreshold(
+                "Minimum score must be <= 100".to_string(),
+            ));
         }
 
         Ok(())
@@ -694,13 +726,19 @@ impl NotificationConfig {
     pub fn validate(&self) -> Result<(), SecurityScanError> {
         for email in &self.email_recipients {
             if !email.contains('@') {
-                return Err(SecurityScanError::InvalidNotification(format!("Invalid email address: {}", email)));
+                return Err(SecurityScanError::InvalidNotification(format!(
+                    "Invalid email address: {}",
+                    email
+                )));
             }
         }
 
         for webhook in &self.webhook_urls {
             if !webhook.starts_with("http://") && !webhook.starts_with("https://") {
-                return Err(SecurityScanError::InvalidNotification(format!("Invalid webhook URL: {}", webhook)));
+                return Err(SecurityScanError::InvalidNotification(format!(
+                    "Invalid webhook URL: {}",
+                    webhook
+                )));
             }
         }
 
@@ -709,9 +747,9 @@ impl NotificationConfig {
 
     /// Check if notifications are enabled
     pub fn notifications_enabled(&self) -> bool {
-        !self.email_recipients.is_empty() ||
-        !self.webhook_urls.is_empty() ||
-        !self.slack_webhooks.is_empty()
+        !self.email_recipients.is_empty()
+            || !self.webhook_urls.is_empty()
+            || !self.slack_webhooks.is_empty()
     }
 }
 
@@ -810,7 +848,8 @@ mod tests {
 
     #[test]
     fn test_new_scan_config() {
-        let config = SecurityScanConfig::new("test-scan".to_string(), "test-image:latest".to_string());
+        let config =
+            SecurityScanConfig::new("test-scan".to_string(), "test-image:latest".to_string());
         assert_eq!(config.name, "test-scan");
         assert_eq!(config.image_name, "test-image:latest");
     }
@@ -835,13 +874,19 @@ mod tests {
     #[test]
     fn test_validate_empty_name() {
         let config = SecurityScanConfig::new("".to_string(), "test:latest".to_string());
-        assert!(matches!(config.validate(), Err(SecurityScanError::InvalidName(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(SecurityScanError::InvalidName(_))
+        ));
     }
 
     #[test]
     fn test_validate_no_target() {
         let config = SecurityScanConfig::new("test".to_string(), "".to_string());
-        assert!(matches!(config.validate(), Err(SecurityScanError::InvalidTarget(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(SecurityScanError::InvalidTarget(_))
+        ));
     }
 
     #[test]
@@ -884,7 +929,10 @@ mod tests {
         let config = SecurityScanConfig::new("test".to_string(), "test:latest".to_string())
             .with_schedule(schedule);
 
-        assert!(matches!(config.validate(), Err(SecurityScanError::InvalidSchedule(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(SecurityScanError::InvalidSchedule(_))
+        ));
     }
 
     #[test]
@@ -895,18 +943,26 @@ mod tests {
         let config = SecurityScanConfig::new("test".to_string(), "test:latest".to_string())
             .with_severity_thresholds(thresholds);
 
-        assert!(matches!(config.validate(), Err(SecurityScanError::InvalidThreshold(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(SecurityScanError::InvalidThreshold(_))
+        ));
     }
 
     #[test]
     fn test_notification_validation() {
         let mut notifications = NotificationConfig::default();
-        notifications.email_recipients.push("invalid-email".to_string());
+        notifications
+            .email_recipients
+            .push("invalid-email".to_string());
 
         let config = SecurityScanConfig::new("test".to_string(), "test:latest".to_string())
             .with_notifications(notifications);
 
-        assert!(matches!(config.validate(), Err(SecurityScanError::InvalidNotification(_))));
+        assert!(matches!(
+            config.validate(),
+            Err(SecurityScanError::InvalidNotification(_))
+        ));
     }
 
     #[test]
@@ -915,5 +971,86 @@ mod tests {
         let display = format!("{}", config);
         assert!(display.contains("name=test-scan"));
         assert!(display.contains("scan_types="));
+    }
+}
+
+/// Builder for SecurityScanConfig
+#[derive(Default)]
+pub struct SecurityScanConfigBuilder {
+    name: String,
+    description: String,
+    scan_types: HashSet<ScanType>,
+    image_name: String,
+    container_name: Option<String>,
+    schedule: Option<ScanSchedule>,
+    severity_thresholds: Option<SeverityThresholds>,
+    compliance_standards: HashSet<ComplianceStandard>,
+    output_format: Option<OutputFormat>,
+    notifications: Option<NotificationConfig>,
+    custom_parameters: std::collections::HashMap<String, String>,
+    severity_threshold: Option<String>,
+}
+
+impl SecurityScanConfigBuilder {
+    pub fn name(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
+
+    pub fn image_name(mut self, image_name: String) -> Self {
+        self.image_name = image_name;
+        self
+    }
+
+    pub fn description(mut self, description: String) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn scan_types(mut self, scan_types: Vec<ScanType>) -> Self {
+        self.scan_types = scan_types.into_iter().collect();
+        self
+    }
+
+    pub fn severity_threshold(mut self, threshold: String) -> Self {
+        self.severity_threshold = Some(threshold);
+        self
+    }
+
+    pub fn output_format(mut self, format: OutputFormat) -> Self {
+        self.output_format = Some(format);
+        self
+    }
+
+    pub fn build(self) -> Result<SecurityScanConfig, SecurityScanError> {
+        let now = chrono::Utc::now();
+        Ok(SecurityScanConfig {
+            id: uuid::Uuid::new_v4(),
+            name: self.name,
+            description: self.description,
+            scan_types: if self.scan_types.is_empty() {
+                let mut types = HashSet::new();
+                types.insert(ScanType::Vulnerability);
+                types
+            } else {
+                self.scan_types
+            },
+            image_name: self.image_name,
+            container_name: self.container_name,
+            schedule: self.schedule.unwrap_or_default(),
+            severity_thresholds: self.severity_thresholds.unwrap_or_default(),
+            compliance_standards: if self.compliance_standards.is_empty() {
+                let mut standards = HashSet::new();
+                standards.insert(ComplianceStandard::CISDockerBenchmark);
+                standards
+            } else {
+                self.compliance_standards
+            },
+            output_format: self.output_format.unwrap_or(OutputFormat::Json),
+            notifications: self.notifications.unwrap_or_default(),
+            custom_parameters: self.custom_parameters,
+            created_at: now,
+            updated_at: now,
+        })
     }
 }

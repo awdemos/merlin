@@ -1,4 +1,5 @@
-// src/ab_testing/experiment.rs
+//! Experiment management for A/B testing.
+
 use crate::ab_testing::{ExperimentConfig, VariantConfig, ExperimentMetrics, ExperimentStorage};
 use crate::routing::RoutingPolicy;
 use std::collections::HashMap;
@@ -6,19 +7,28 @@ use rand::{thread_rng, Rng};
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 
+/// An A/B testing experiment with variants and user assignments.
 pub struct Experiment {
+    /// Experiment configuration.
     pub config: ExperimentConfig,
+    /// Map of variant ID to Variant.
     pub variants: HashMap<String, Variant>,
-    pub user_assignments: HashMap<String, String>, // user_id -> variant_id
+    /// Map of user ID to assigned variant ID.
+    pub user_assignments: HashMap<String, String>,
 }
 
+/// A variant within an A/B experiment.
 pub struct Variant {
+    /// Variant configuration.
     pub config: VariantConfig,
+    /// Routing policy for this variant.
     pub routing_policy: RoutingPolicy,
+    /// Metrics collected for this variant.
     pub metrics: ExperimentMetrics,
 }
 
 impl Experiment {
+    /// Creates a new experiment from the given configuration.
     pub fn new(config: ExperimentConfig) -> Result<Self> {
         config.validate().map_err(|e| anyhow::anyhow!(e))?;
 
@@ -44,6 +54,7 @@ impl Experiment {
         })
     }
 
+    /// Assigns a user to a variant and returns the assigned variant.
     pub fn assign_user(&mut self, user_id: &str) -> Option<&Variant> {
         // Check if user is already assigned
         if let Some(variant_id) = self.user_assignments.get(user_id) {
@@ -66,6 +77,7 @@ impl Experiment {
         self.variants.get(&variant_id)
     }
 
+    /// Records an interaction with metrics for a specific variant.
     pub fn record_interaction(&mut self, _user_id: &str, variant_id: &str, metrics: &InteractionMetrics) {
         if let Some(variant) = self.variants.get_mut(variant_id) {
             variant.metrics.record_interaction(metrics);
@@ -273,58 +285,93 @@ impl Experiment {
     }
 }
 
+/// Results of an experiment including all variant metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentResults {
+    /// Unique experiment identifier.
     pub experiment_id: String,
+    /// Human-readable experiment name.
     pub experiment_name: String,
+    /// Current status of the experiment.
     pub status: crate::ab_testing::config::ExperimentStatus,
+    /// Results for each variant.
     pub variant_results: HashMap<String, VariantResult>,
+    /// Total number of users assigned to the experiment.
     pub total_users: u32,
+    /// Statistical significance of the results (p-value).
     pub statistical_significance: Option<f64>,
+    /// Recommendation based on the results.
     pub recommendation: ExperimentRecommendation,
 }
 
+/// Results for a single variant in an experiment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariantResult {
+    /// Variant configuration.
     pub config: VariantConfig,
+    /// Collected metrics.
     pub metrics: ExperimentMetrics,
+    /// Number of users assigned to this variant.
     pub sample_size: u32,
+    /// 95% confidence interval for the success rate.
     pub confidence_interval: (f64, f64),
+    /// Whether this variant is the winner.
     pub is_winner: bool,
 }
 
+/// Recommendation for experiment action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExperimentRecommendation {
+    /// Continue running the experiment.
     Continue,
+    /// Deploy the winning variant.
     Deploy { variant_id: String },
+    /// Roll back to control.
     Rollback,
+    /// Results are inconclusive.
     Inconclusive,
 }
 
+/// Context for a user assigned to an experiment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentContext {
+    /// Experiment ID.
     pub experiment_id: String,
+    /// Assigned variant ID.
     pub variant_id: String,
+    /// Routing policy for this variant.
     pub routing_policy: crate::ab_testing::config::RoutingPolicyConfig,
+    /// When the user was assigned.
     pub user_assignment_time: chrono::DateTime<chrono::Utc>,
 }
 
+/// Metrics for a single interaction.
 #[derive(Debug, Clone)]
 pub struct InteractionMetrics {
+    /// Response time in milliseconds.
     pub response_time_ms: u32,
+    /// Whether the interaction was successful.
     pub success: bool,
+    /// Optional user rating (1-5).
     pub user_rating: Option<u8>,
+    /// Cost of the interaction.
     pub cost: f64,
+    /// Error message if failed.
     pub error_message: Option<String>,
+    /// When the interaction occurred.
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+/// Runner that manages multiple concurrent experiments.
 pub struct ExperimentRunner {
+    /// Active experiments by ID.
     pub experiments: HashMap<String, Experiment>,
+    /// Storage backend for experiment data.
     pub storage: Box<dyn ExperimentStorage>,
 }
 
 impl ExperimentRunner {
+    /// Creates a new experiment runner with the given storage backend.
     pub fn new(storage: Box<dyn ExperimentStorage>) -> Self {
         Self {
             experiments: HashMap::new(),
@@ -332,6 +379,7 @@ impl ExperimentRunner {
         }
     }
 
+    /// Loads all experiments from storage.
     pub async fn load_experiments(&mut self) -> Result<()> {
         let configs = self.storage.load_experiment_configs().await?;
         for config in configs {
@@ -343,12 +391,14 @@ impl ExperimentRunner {
         Ok(())
     }
 
+    /// Gets the variant assignment for a user in an experiment.
     pub fn get_variant_for_user(&mut self, experiment_id: &str, user_id: &str) -> Option<&Variant> {
         self.experiments
             .get_mut(experiment_id)
             .and_then(|exp| exp.assign_user(user_id))
     }
 
+    /// Records an interaction for a user in an experiment.
     pub fn record_interaction(&mut self, experiment_id: &str, user_id: &str, metrics: &InteractionMetrics) {
         if let Some(variant_id) = self.experiments
             .get_mut(experiment_id)
@@ -359,6 +409,7 @@ impl ExperimentRunner {
         }
     }
 
+    /// Saves results for all experiments to storage.
     pub async fn save_results(&self) -> Result<()> {
         for experiment in self.experiments.values() {
             let results = experiment.get_results();

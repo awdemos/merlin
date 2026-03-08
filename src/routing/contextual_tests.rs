@@ -53,10 +53,20 @@ mod tests {
         let learning_rate = 0.1;
         let exploration_rate = 0.2;
 
-        let policy = RoutingPolicy::new_contextual(num_providers, feature_dim, learning_rate, exploration_rate);
+        let policy = RoutingPolicy::new_contextual(
+            num_providers,
+            feature_dim,
+            learning_rate,
+            exploration_rate,
+        );
 
         match policy {
-            RoutingPolicy::Contextual { arms, feature_dim: fd, learning_rate: lr, exploration_rate: er } => {
+            RoutingPolicy::Contextual {
+                arms,
+                feature_dim: fd,
+                learning_rate: lr,
+                exploration_rate: er,
+            } => {
                 assert_eq!(arms.len(), num_providers);
                 assert_eq!(fd, feature_dim);
                 assert!((lr - learning_rate).abs() < 0.001);

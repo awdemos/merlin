@@ -1,4 +1,8 @@
-// src/ab_testing/mod.rs
+//! A/B testing framework for model selection experiments.
+//!
+//! This module provides tools for running controlled experiments to compare
+//! different LLM routing strategies and model configurations.
+
 pub mod config;
 pub mod enhanced_model_selector;
 pub mod experiment;

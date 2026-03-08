@@ -183,7 +183,8 @@ impl ContainerState {
         }
 
         if (self.status == ContainerStatus::Exited || self.status == ContainerStatus::Failed)
-            && self.finished_at.is_none() {
+            && self.finished_at.is_none()
+        {
             return Err("Exited/failed container must have finished_at timestamp".to_string());
         }
 
@@ -202,7 +203,8 @@ impl ContainerState {
             ContainerStatus::Restarting => "restarting",
             ContainerStatus::Removing => "removing",
             ContainerStatus::Dead => "dead",
-        }.to_string()
+        }
+        .to_string()
     }
 
     /// Get container summary
@@ -249,7 +251,8 @@ impl ContainerMetrics {
     /// Calculate memory usage percentage
     pub fn calculate_memory_percent(&mut self) {
         if self.memory_limit_mb > 0 {
-            self.memory_percent = (self.memory_usage_mb as f64 / self.memory_limit_mb as f64) * 100.0;
+            self.memory_percent =
+                (self.memory_usage_mb as f64 / self.memory_limit_mb as f64) * 100.0;
         }
     }
 

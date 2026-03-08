@@ -222,7 +222,9 @@ pub async fn update_feature(
 
     storage.update_feature(&feature_id, updated_feature)?;
 
-    Ok(Json(storage.get_feature(&feature_id).unwrap().clone()))
+    let feature = storage.get_feature(&feature_id)
+        .ok_or_else(|| FeatureNumberingError::StorageError("Failed to retrieve updated feature".to_string()))?;
+    Ok(Json(feature.clone()))
 }
 
 pub async fn delete_feature(
@@ -248,7 +250,9 @@ pub async fn update_feature_status(
     feature.update_status(request.status)?;
     storage.update_feature(&feature_id, feature)?;
 
-    Ok(Json(storage.get_feature(&feature_id).unwrap().clone()))
+    let feature = storage.get_feature(&feature_id)
+        .ok_or_else(|| FeatureNumberingError::StorageError("Failed to retrieve updated feature".to_string()))?;
+    Ok(Json(feature.clone()))
 }
 
 pub async fn get_next_number(

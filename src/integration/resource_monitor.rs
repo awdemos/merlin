@@ -621,6 +621,12 @@ impl ResourceMonitor {
             timestamp: chrono::Utc::now(),
         }
     }
+
+    /// Get count of collected metrics across all containers
+    pub async fn get_metrics_count(&self) -> usize {
+        let metrics = self.metrics.read().await;
+        metrics.values().map(|v| v.len()).sum()
+    }
 }
 
 impl Clone for ResourceMonitor {

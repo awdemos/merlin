@@ -4,12 +4,23 @@
 //! and Docker Bench for comprehensive container security analysis.
 
 use crate::models::docker_config::DockerConfigError;
-use crate::models::security_scan_config::{SecurityScanConfig, Vulnerability, ComplianceStandard};
+use crate::models::security_scan_config::{SecurityScanConfig, ComplianceStandard};
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::process::Command;
 use tracing::{info, warn, error, debug};
+
+/// Vulnerability information from security scans
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Vulnerability {
+    pub id: String,
+    pub severity: String,
+    pub package: String,
+    pub version: String,
+    pub fixed_version: Option<String>,
+    pub description: Option<String>,
+}
 
 /// Security scanner interface
 pub struct SecurityScanner {
@@ -114,22 +125,22 @@ pub enum OutputFormat {
 impl SecurityScanner {
     /// Create new security scanner
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let scanner = Self {
+        let cache_dir = dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".cache"))
+            .join("merlin-scanner")
+            .to_string_lossy()
+            .to_string();
+
+        // Create cache directory synchronously
+        std::fs::create_dir_all(&cache_dir)?;
+
+        Ok(Self {
             trivy_path: "trivy".to_string(),
             hadolint_path: "hadolint".to_string(),
             docker_bench_path: "docker/docker-bench-security".to_string(),
-            cache_dir: dirs::cache_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from(".cache"))
-                .join("merlin-scanner")
-                .to_string_lossy()
-                .to_string(),
+            cache_dir,
             scan_timeout: std::time::Duration::from_secs(600),
-        };
-
-        // Create cache directory
-        tokio::fs::create_dir_all(&scanner.cache_dir).await?;
-
-        Ok(scanner)
+        })
     }
 
     /// Configure scanner paths
@@ -291,7 +302,7 @@ impl SecurityScanner {
             return Err(DockerConfigError::SecurityError(error_output.to_string()));
         }
 
-        let vulnerabilities: Vec<Vulnerability> = match serde_json::from_slice(&output.stdout) {
+        let vulnerabilities: Vec<Vulnerability> = match serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout) {
             Ok(trivy_results) => {
                 let mut vulns = Vec::new();
                 for result in trivy_results {
@@ -322,7 +333,10 @@ impl SecurityScanner {
         info!("Scanning configuration for image: {}", image_name);
 
         // Get Dockerfile for the image
-        let dockerfile_content = self.get_dockerfile_for_image(image_name).await?;
+        let dockerfile_content = match self.get_dockerfile_for_image(image_name).await {
+            Ok(content) => content,
+            Err(e) => return ScanResult::Error(e.to_string()),
+        };
         if dockerfile_content.is_empty() {
             return ScanResult::Issues(Vec::new());
         }
@@ -331,24 +345,30 @@ impl SecurityScanner {
         cmd.arg("--format")
            .arg("json");
 
-        let mut child = cmd
+        let mut child = match cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn hadolint: {}", e))?;
+        {
+            Ok(c) => c,
+            Err(e) => return ScanResult::Error(format!("Failed to spawn hadolint: {}", e)),
+        };
 
         if let Some(stdin) = child.stdin.as_mut() {
             use tokio::io::AsyncWriteExt;
-            stdin.write_all(dockerfile_content.as_bytes()).await
-                .map_err(|e| format!("Failed to write to hadolint stdin: {}", e))?;
+            if let Err(e) = stdin.write_all(dockerfile_content.as_bytes()).await {
+                return ScanResult::Error(format!("Failed to write to hadolint stdin: {}", e));
+            }
         }
 
-        let output = child.wait_with_output().await
-            .map_err(|e| format!("Failed to get hadolint output: {}", e))?;
+        let output = match child.wait_with_output().await {
+            Ok(o) => o,
+            Err(e) => return ScanResult::Error(format!("Failed to get hadolint output: {}", e)),
+        };
 
         let issues: Vec<ConfigurationIssue> = if output.status.success() {
-            match serde_json::from_slice(&output.stdout) {
+            match serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout) {
                 Ok(hadolint_results) => {
                     // Parse Hadolint JSON output
                     hadolint_results.into_iter().map(|result| ConfigurationIssue {
@@ -388,37 +408,29 @@ impl SecurityScanner {
         // Add compliance standard as arguments
         match standard {
             ComplianceStandard::CISDockerBenchmark => {
-                cmd.push("-c".to_string());
-                cmd.push("cis".to_string());
+                cmd.arg("-c").arg("cis");
             }
             ComplianceStandard::NIST800190 => {
-                cmd.push("-c".to_string());
-                cmd.push("nist".to_string());
+                cmd.arg("-c").arg("nist");
             }
             ComplianceStandard::PCIDSS => {
-                cmd.push("-c".to_string());
-                cmd.push("pci".to_string());
+                cmd.arg("-c").arg("pci");
             }
             ComplianceStandard::SOC2 => {
-                cmd.push("-c".to_string());
-                cmd.push("soc2".to_string());
+                cmd.arg("-c").arg("soc2");
             }
             ComplianceStandard::ISO27001 => {
-                cmd.push("-c".to_string());
-                cmd.push("iso27001".to_string());
+                cmd.arg("-c").arg("iso27001");
             }
             ComplianceStandard::HIPAA => {
-                cmd.push("-c".to_string());
-                cmd.push("hipaa".to_string());
+                cmd.arg("-c").arg("hipaa");
             }
             ComplianceStandard::GDPR => {
-                cmd.push("-c".to_string());
-                cmd.push("gdpr".to_string());
+                cmd.arg("-c").arg("gdpr");
             }
         }
 
-        cmd.push("--include-image".to_string());
-        cmd.push(image_name.to_string());
+        cmd.arg("--include-image").arg(image_name);
 
         let output = cmd.output().await.map_err(|e| {
             DockerConfigError::SecurityError(format!("Failed to execute docker bench: {}", e))
@@ -597,6 +609,19 @@ pub struct Secret {
 enum ScanResult {
     Issues(Vec<ConfigurationIssue>),
     Error(String),
+}
+
+impl SecurityScanner {
+    /// Validate a security scan configuration
+    pub async fn validate_configuration(&self, config: &SecurityScanConfig) -> Result<(), DockerConfigError> {
+        if config.image_name.is_empty() {
+            return Err(DockerConfigError::SecurityError("Image name is required".to_string()));
+        }
+        if config.scan_types.is_empty() {
+            return Err(DockerConfigError::SecurityError("At least one scan type is required".to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

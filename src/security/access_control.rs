@@ -7,8 +7,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use crate::models::container_config::DockerContainerConfig;
-use super::docker_client::DockerConfigError;
+use crate::models::docker_config::{DockerContainerConfig, DockerConfigError};
 
 /// User roles for access control
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -380,7 +379,7 @@ impl AccessControlService {
         }
 
         // Check direct permission
-        if !self.has_permission(request.user_id, &request.action) {
+        if !self.has_permission(request.user_id, &request.action).await {
             return Ok(AccessDecision {
                 request_id: request.user_id,
                 allowed: false,

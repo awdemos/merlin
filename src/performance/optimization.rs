@@ -10,12 +10,16 @@ use uuid::Uuid;
 use anyhow::Result;
 use tracing::{info, warn, error};
 
-use anyhow::Result;
+/// Helper function to get current Instant for serde default
+fn instant_now() -> Instant {
+    Instant::now()
+}
 
 /// Performance metrics collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
     pub id: Uuid,
+    #[serde(skip, default = "instant_now")]
     pub timestamp: Instant,
     pub cpu_usage: f64,
     pub memory_usage: f64,
@@ -101,6 +105,7 @@ pub struct PerformanceOptimizationService {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceAlert {
     pub id: Uuid,
+    #[serde(skip, default = "instant_now")]
     pub timestamp: Instant,
     pub alert_type: String,
     pub severity: AlertSeverity,
@@ -121,6 +126,7 @@ pub enum AlertSeverity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationRecommendation {
     pub id: Uuid,
+    #[serde(skip, default = "instant_now")]
     pub timestamp: Instant,
     pub strategy: OptimizationStrategy,
     pub expected_improvement: f64,
@@ -191,7 +197,8 @@ impl PerformanceOptimizationService {
 
             // Keep only last 1000 metrics
             if metrics_store.len() > 1000 {
-                metrics_store.drain(0..metrics_store.len() - 1000);
+                let len = metrics_store.len();
+                metrics_store.drain(0..len - 1000);
             }
         }
 
@@ -322,7 +329,8 @@ impl PerformanceOptimizationService {
 
         // Keep only last 100 alerts
         if alerts.len() > 100 {
-            alerts.drain(0..alerts.len() - 100);
+            let len = alerts.len();
+            alerts.drain(0..len - 100);
         }
 
         Ok(())
@@ -331,10 +339,12 @@ impl PerformanceOptimizationService {
     /// Generate optimization recommendations
     pub async fn generate_recommendations(&self) -> Result<()> {
         let metrics = self.metrics.read().await;
+        let metrics_vec: Vec<PerformanceMetrics> = metrics.clone();
+        drop(metrics);
+        
         let mut recommendations = self.recommendations.write().await;
 
-        // Analyze trends and generate recommendations
-        if let Some(avg_cpu) = self.calculate_average_metric(&metrics, |m| m.cpu_usage).await {
+        if let Some(avg_cpu) = self.calculate_average_metric(&metrics_vec, |m| m.cpu_usage).await {
             if avg_cpu > 80.0 {
                 recommendations.push(OptimizationRecommendation {
                     id: Uuid::new_v4(),
@@ -349,7 +359,7 @@ impl PerformanceOptimizationService {
                     priority: RecommendationPriority::High,
                     description: "Implement auto-scaling to handle high CPU usage".to_string(),
                     implementation_cost: ImplementationCost {
-                        time: Duration::from_hours(8),
+                        time: Duration::from_secs(8 * 3600),
                         resources: "Medium".to_string(),
                         risk_level: RiskLevel::Low,
                     },
@@ -357,13 +367,13 @@ impl PerformanceOptimizationService {
             }
         }
 
-        if let Some(avg_response_time) = self.calculate_average_metric(&metrics, |m| m.response_time.as_millis() as f64).await {
+        if let Some(avg_response_time) = self.calculate_average_metric(&metrics_vec, |m| m.response_time.as_millis() as f64).await {
             if avg_response_time > 100.0 {
                 recommendations.push(OptimizationRecommendation {
                     id: Uuid::new_v4(),
                     timestamp: Instant::now(),
                     strategy: OptimizationStrategy::CacheOptimization {
-                        ttl: Duration::from_hours(1),
+                        ttl: Duration::from_secs(3600),
                         max_size: 10000,
                         eviction_policy: "LRU".to_string(),
                     },
@@ -371,7 +381,7 @@ impl PerformanceOptimizationService {
                     priority: RecommendationPriority::High,
                     description: "Implement caching to reduce response times".to_string(),
                     implementation_cost: ImplementationCost {
-                        time: Duration::from_hours(4),
+                        time: Duration::from_secs(4 * 3600),
                         resources: "Low".to_string(),
                         risk_level: RiskLevel::Low,
                     },
@@ -379,13 +389,13 @@ impl PerformanceOptimizationService {
             }
         }
 
-        if let Some(cache_hit_rate) = self.calculate_average_metric(&metrics, |m| m.cache_hit_rate).await {
+        if let Some(cache_hit_rate) = self.calculate_average_metric(&metrics_vec, |m| m.cache_hit_rate).await {
             if cache_hit_rate < 70.0 {
                 recommendations.push(OptimizationRecommendation {
                     id: Uuid::new_v4(),
                     timestamp: Instant::now(),
                     strategy: OptimizationStrategy::CacheOptimization {
-                        ttl: Duration::from_hours(2),
+                        ttl: Duration::from_secs(2 * 3600),
                         max_size: 50000,
                         eviction_policy: "LFU".to_string(),
                     },
@@ -393,7 +403,7 @@ impl PerformanceOptimizationService {
                     priority: RecommendationPriority::Medium,
                     description: "Optimize cache configuration to improve hit rate".to_string(),
                     implementation_cost: ImplementationCost {
-                        time: Duration::from_hours(2),
+                        time: Duration::from_secs(2 * 3600),
                         resources: "Low".to_string(),
                         risk_level: RiskLevel::Low,
                     },
@@ -401,9 +411,9 @@ impl PerformanceOptimizationService {
             }
         }
 
-        // Keep only last 50 recommendations
         if recommendations.len() > 50 {
-            recommendations.drain(0..recommendations.len() - 50);
+            let len = recommendations.len();
+            recommendations.drain(0..len - 50);
         }
 
         Ok(())
@@ -571,6 +581,7 @@ pub struct PerformanceSummary {
     pub active_alerts: usize,
     pub pending_recommendations: usize,
     pub health_score: f64,
+    #[serde(skip)]
     pub last_updated: Option<Instant>,
 }
 
@@ -588,7 +599,7 @@ mod tests {
             disk_threshold: 90.0,
             response_time_threshold: Duration::from_millis(100),
             error_rate_threshold: 1.0,
-            cache_ttl: Duration::from_hours(1),
+            cache_ttl: Duration::from_secs(3600),
             connection_pool_size: 10,
             queue_size_limit: 1000,
             optimization_enabled: true,
