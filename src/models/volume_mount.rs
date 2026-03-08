@@ -43,7 +43,10 @@ impl Default for VolumeMount {
 
 impl VolumeMount {
     /// Create a new bind mount
-    pub fn bind_mount(source: impl AsRef<std::path::Path>, destination: impl AsRef<std::path::Path>) -> Self {
+    pub fn bind_mount(
+        source: impl AsRef<std::path::Path>,
+        destination: impl AsRef<std::path::Path>,
+    ) -> Self {
         Self {
             source: source.as_ref().to_path_buf(),
             destination: destination.as_ref().to_path_buf(),
@@ -89,45 +92,59 @@ impl VolumeMount {
     /// Validate the volume mount configuration
     pub fn validate(&self) -> Result<(), VolumeMountError> {
         if self.destination.as_os_str().is_empty() {
-            return Err(VolumeMountError::InvalidDestination("Destination path cannot be empty".to_string()));
+            return Err(VolumeMountError::InvalidDestination(
+                "Destination path cannot be empty".to_string(),
+            ));
         }
 
         // Validate destination is an absolute path
         if !self.destination.is_absolute() {
-            return Err(VolumeMountError::InvalidDestination("Destination path must be absolute".to_string()));
+            return Err(VolumeMountError::InvalidDestination(
+                "Destination path must be absolute".to_string(),
+            ));
         }
 
         if self.is_bind_mount {
             if self.source.as_os_str().is_empty() {
-                return Err(VolumeMountError::InvalidSource("Source path cannot be empty for bind mounts".to_string()));
+                return Err(VolumeMountError::InvalidSource(
+                    "Source path cannot be empty for bind mounts".to_string(),
+                ));
             }
 
             // Validate source exists (for bind mounts)
             if !self.source.exists() && !self.source.to_string_lossy().starts_with("npipe://") {
-                return Err(VolumeMountError::SourceNotFound(format!("Source path does not exist: {}", self.source.display())));
+                return Err(VolumeMountError::SourceNotFound(format!(
+                    "Source path does not exist: {}",
+                    self.source.display()
+                )));
             }
 
             // Validate dangerous source paths
             if self.is_dangerous_source_path() {
                 return Err(VolumeMountError::SecurityViolation(
-                    "Source path is not allowed for security reasons".to_string()
+                    "Source path is not allowed for security reasons".to_string(),
                 ));
             }
         } else {
             if self.name.is_none() || self.name.as_ref().unwrap().is_empty() {
-                return Err(VolumeMountError::InvalidName("Volume name cannot be empty for named volumes".to_string()));
+                return Err(VolumeMountError::InvalidName(
+                    "Volume name cannot be empty for named volumes".to_string(),
+                ));
             }
         }
 
         // Validate mode
         if self.mode != "ro" && self.mode != "rw" {
-            return Err(VolumeMountError::InvalidMode(format!("Invalid mount mode: {}", self.mode)));
+            return Err(VolumeMountError::InvalidMode(format!(
+                "Invalid mount mode: {}",
+                self.mode
+            )));
         }
 
         // Validate destination is not a dangerous path
         if self.is_dangerous_destination_path() {
             return Err(VolumeMountError::SecurityViolation(
-                "Destination path is not allowed for security reasons".to_string()
+                "Destination path is not allowed for security reasons".to_string(),
             ));
         }
 
@@ -143,17 +160,17 @@ impl VolumeMount {
         let source_str = self.source.to_string_lossy().to_lowercase();
 
         // System-critical directories
-        source_str.starts_with("/bin") ||
-        source_str.starts_with("/sbin") ||
-        source_str.starts_with("/lib") ||
-        source_str.starts_with("/usr") ||
-        source_str.starts_with("/etc") ||
-        source_str.starts_with("/boot") ||
-        source_str.starts_with("/dev") ||
-        source_str.starts_with("/proc") ||
-        source_str.starts_with("/sys") ||
-        source_str.contains("/docker") ||
-        source_str.contains("/var/lib/docker")
+        source_str.starts_with("/bin")
+            || source_str.starts_with("/sbin")
+            || source_str.starts_with("/lib")
+            || source_str.starts_with("/usr")
+            || source_str.starts_with("/etc")
+            || source_str.starts_with("/boot")
+            || source_str.starts_with("/dev")
+            || source_str.starts_with("/proc")
+            || source_str.starts_with("/sys")
+            || source_str.contains("/docker")
+            || source_str.contains("/var/lib/docker")
     }
 
     /// Check if destination path is potentially dangerous
@@ -161,15 +178,15 @@ impl VolumeMount {
         let dest_str = self.destination.to_string_lossy().to_lowercase();
 
         // System-critical directories
-        dest_str.starts_with("/bin") ||
-        dest_str.starts_with("/sbin") ||
-        dest_str.starts_with("/lib") ||
-        dest_str.starts_with("/usr") ||
-        dest_str.starts_with("/etc") ||
-        dest_str.starts_with("/boot") ||
-        dest_str.starts_with("/dev") ||
-        dest_str.starts_with("/proc") ||
-        dest_str.starts_with("/sys")
+        dest_str.starts_with("/bin")
+            || dest_str.starts_with("/sbin")
+            || dest_str.starts_with("/lib")
+            || dest_str.starts_with("/usr")
+            || dest_str.starts_with("/etc")
+            || dest_str.starts_with("/boot")
+            || dest_str.starts_with("/dev")
+            || dest_str.starts_with("/proc")
+            || dest_str.starts_with("/sys")
     }
 
     /// Generate Docker volume mount argument
@@ -199,7 +216,11 @@ impl VolumeMount {
 
             Ok(arg)
         } else {
-            let mut arg = format!("{}:{}", self.name.as_ref().unwrap(), self.destination.display());
+            let mut arg = format!(
+                "{}:{}",
+                self.name.as_ref().unwrap(),
+                self.destination.display()
+            );
 
             // Add mode
             if !self.mode.is_empty() {
@@ -386,27 +407,39 @@ mod tests {
     #[test]
     fn test_validate_nonexistent_source() {
         let volume = VolumeMount::bind_mount("/nonexistent/path", "/container/path");
-        assert!(matches!(volume.validate(), Err(VolumeMountError::SourceNotFound(_))));
+        assert!(matches!(
+            volume.validate(),
+            Err(VolumeMountError::SourceNotFound(_))
+        ));
     }
 
     #[test]
     fn test_validate_relative_destination() {
         let temp_dir = tempdir().unwrap();
         let volume = VolumeMount::bind_mount(temp_dir.path(), "relative/path");
-        assert!(matches!(volume.validate(), Err(VolumeMountError::InvalidDestination(_))));
+        assert!(matches!(
+            volume.validate(),
+            Err(VolumeMountError::InvalidDestination(_))
+        ));
     }
 
     #[test]
     fn test_validate_dangerous_source() {
         let volume = VolumeMount::bind_mount("/etc", "/container/etc");
-        assert!(matches!(volume.validate(), Err(VolumeMountError::SecurityViolation(_))));
+        assert!(matches!(
+            volume.validate(),
+            Err(VolumeMountError::SecurityViolation(_))
+        ));
     }
 
     #[test]
     fn test_validate_dangerous_destination() {
         let temp_dir = tempdir().unwrap();
         let volume = VolumeMount::bind_mount(temp_dir.path(), "/bin");
-        assert!(matches!(volume.validate(), Err(VolumeMountError::SecurityViolation(_))));
+        assert!(matches!(
+            volume.validate(),
+            Err(VolumeMountError::SecurityViolation(_))
+        ));
     }
 
     #[test]
@@ -421,7 +454,8 @@ mod tests {
 
     #[test]
     fn test_docker_arg_named_volume() {
-        let volume = VolumeMount::named_volume("my_volume".to_string(), "/container/path").read_write();
+        let volume =
+            VolumeMount::named_volume("my_volume".to_string(), "/container/path").read_write();
         let arg = volume.docker_arg().unwrap();
         assert_eq!(arg, "my_volume:/container/path:rw");
     }

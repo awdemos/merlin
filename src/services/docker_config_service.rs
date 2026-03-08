@@ -257,7 +257,7 @@ async fn handle_build(
                         "build_time": build_result.build_time.to_rfc3339(),
                         "config_id": config_id
                     });
-                    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::OK))
+                    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
                 }
                 Err(e) => {
                     let response = json!({
@@ -265,7 +265,7 @@ async fn handle_build(
                         "message": e.to_string(),
                         "config_id": config_id
                     });
-                    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST))
+                    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
                 }
             }
         }
@@ -274,7 +274,7 @@ async fn handle_build(
                 "status": "error",
                 "message": e.to_string()
             });
-            Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST))
+            Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
         }
     }
 }
@@ -289,16 +289,17 @@ async fn handle_scan(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
+    let empty_array: Vec<serde_json::Value> = vec![];
     let scan_types = scan_request.get("scan_types")
         .and_then(|v| v.as_array())
-        .unwrap_or(&vec![]);
+        .unwrap_or(&empty_array);
 
     if image_name.is_empty() {
         let response = json!({
             "status": "error",
             "message": "Image name is required"
         });
-        return Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST));
+        return Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST));
     }
 
     // For now, simulate scan results
@@ -325,7 +326,7 @@ async fn handle_scan(
         }
     });
 
-    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::OK))
+    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
 }
 
 /// Handle Docker validation requests
@@ -354,7 +355,7 @@ async fn handle_validate(
                         "recommendations": validation_result.recommendations,
                         "validated_at": validation_result.validated_at.to_rfc3339()
                     });
-                    Ok(warp::reply::with_status(json!(response), if validation_result.valid {
+                    Ok(warp::reply::with_status(warp::reply::json(&response), if validation_result.valid {
                         warp::http::StatusCode::OK
                     } else {
                         warp::http::StatusCode::BAD_REQUEST
@@ -365,7 +366,7 @@ async fn handle_validate(
                         "status": "error",
                         "message": e.to_string()
                     });
-                    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST))
+                    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
                 }
             }
         }
@@ -374,7 +375,7 @@ async fn handle_validate(
                 "status": "error",
                 "message": e.to_string()
             });
-            Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST))
+            Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
         }
     }
 }
@@ -400,7 +401,7 @@ async fn handle_health(
         }
     });
 
-    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::OK))
+    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
 }
 
 /// Result of Docker image build

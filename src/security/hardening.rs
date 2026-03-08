@@ -6,9 +6,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use crate::models::container_config::DockerContainerConfig;
+use crate::models::docker_config::{DockerContainerConfig, DockerConfigError};
 use crate::models::security_scan_config::{SecurityScanConfig, ComplianceStandard};
-use super::docker_client::DockerConfigError;
 
 /// Security hardening configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +78,7 @@ pub struct HardeningResult {
 }
 
 /// Security control types
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SecurityControl {
     SeccompProfile,
     AppArmorProfile,
@@ -432,6 +431,7 @@ impl SecurityHardeningService {
                     },
                     compliance_standards: vec![ComplianceStandard::CISDockerBenchmark],
                 },
+                compliance_standards: vec![ComplianceStandard::CISDockerBenchmark],
             },
             SecurityProfile {
                 name: "strict".to_string(),
@@ -482,6 +482,11 @@ impl SecurityHardeningService {
                         ComplianceStandard::PCIDSS,
                     ],
                 },
+                compliance_standards: vec![
+                    ComplianceStandard::CISDockerBenchmark,
+                    ComplianceStandard::NIST800190,
+                    ComplianceStandard::PCIDSS,
+                ],
             },
         ];
 

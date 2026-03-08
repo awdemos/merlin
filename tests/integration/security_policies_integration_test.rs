@@ -4,7 +4,7 @@ use merlin::security::policies::{
     PolicyEngine, SecurityPolicy, PolicyType, EnforcementLevel, PolicyStatus, PolicyRule,
     PolicyOperator, PolicySeverity, PolicyResult, PolicyEvaluation, PolicyViolation
 };
-use merlin::models::container_config::DockerContainerConfig;
+use merlin::models::docker_config::DockerContainerConfig;
 use merlin::models::security_scan_config::ComplianceStandard;
 use std::collections::HashMap;
 

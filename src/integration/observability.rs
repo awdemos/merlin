@@ -8,10 +8,10 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use tracing::{info, warn, error, debug, span, Level};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use prometheus::{Counter, Histogram, Gauge, Registry, TextEncoder, Encoder};
 use crate::models::container_state::{ContainerState, ContainerStatus};
-use crate::integration::docker_client::DockerConfigError;
+use crate::models::docker_config::DockerConfigError;
 
 /// Observability metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,10 +94,11 @@ pub struct Metrics {
 }
 
 impl ObservabilityService {
-    pub fn new(config: ObservabilityConfig) -> Result<Self, DockerConfigError> {
+    pub async fn new(config: ObservabilityConfig) -> Result<Self, DockerConfigError> {
         let registry = Registry::new();
 
-        // Initialize metrics
+        let enable_logging = config.enable_logging;
+
         let counters = Arc::new(RwLock::new(HashMap::new()));
         let gauges = Arc::new(RwLock::new(HashMap::new()));
         let histograms = Arc::new(RwLock::new(HashMap::new()));
@@ -112,11 +113,9 @@ impl ObservabilityService {
             config,
         };
 
-        // Initialize predefined metrics
-        service.initialize_metrics()?;
+        service.initialize_metrics().await?;
 
-        // Setup logging if enabled
-        if config.enable_logging {
+        if enable_logging {
             service.setup_logging()?;
         }
 
@@ -124,10 +123,10 @@ impl ObservabilityService {
     }
 
     /// Initialize predefined metrics
-    fn initialize_metrics(&self) -> Result<(), DockerConfigError> {
-        let mut counters = self.counters.write().unwrap();
-        let mut gauges = self.gauges.write().unwrap();
-        let mut histograms = self.histograms.write().unwrap();
+    async fn initialize_metrics(&self) -> Result<(), DockerConfigError> {
+        let mut counters = self.counters.write().await;
+        let mut gauges = self.gauges.write().await;
+        let mut histograms = self.histograms.write().await;
 
         // Container metrics
         counters.insert(
@@ -180,7 +179,9 @@ impl ObservabilityService {
         // Request metrics
         histograms.insert(
             "request_duration_seconds".to_string(),
-            Histogram::new("request_duration_seconds", "Request duration in seconds")?
+            Histogram::with_opts(
+                prometheus::HistogramOpts::new("request_duration_seconds", "Request duration in seconds")
+            )?
         );
 
         // Register all metrics
@@ -265,7 +266,7 @@ impl ObservabilityService {
             return Ok(());
         }
 
-        let counters = self.counters.read().unwrap();
+        let counters = self.counters.read().await;
         if let Some(counter) = counters.get(metric_name) {
             counter.inc_by(value);
         }
@@ -284,7 +285,7 @@ impl ObservabilityService {
             return Ok(());
         }
 
-        let gauges = self.gauges.read().unwrap();
+        let gauges = self.gauges.read().await;
         if let Some(gauge) = gauges.get(metric_name) {
             gauge.set(value);
         }
@@ -303,7 +304,7 @@ impl ObservabilityService {
             return Ok(());
         }
 
-        let histograms = self.histograms.read().unwrap();
+        let histograms = self.histograms.read().await;
         if let Some(histogram) = histograms.get(metric_name) {
             histogram.observe(value);
         }
@@ -324,6 +325,9 @@ impl ObservabilityService {
             return Ok(());
         }
 
+        // Clone level before using in LogEntry (need it later for tracing)
+        let level_clone = level.clone();
+        
         let entry = LogEntry {
             timestamp: Utc::now(),
             level,
@@ -342,12 +346,13 @@ impl ObservabilityService {
         logs.retain(|log| log.timestamp > cutoff);
 
         // Also emit to tracing
+        let level = level_clone;
         match level {
-            LogLevel::Debug => debug!(target: component, "{}", message),
-            LogLevel::Info => info!(target: component, "{}", message),
-            LogLevel::Warning => warn!(target: component, "{}", message),
-            LogLevel::Error => error!(target: component, "{}", message),
-            LogLevel::Critical => error!(target: component, "CRITICAL: {}", message),
+            LogLevel::Debug => debug!(component = %component, "{}", message),
+            LogLevel::Info => info!(component = %component, "{}", message),
+            LogLevel::Warning => warn!(component = %component, "{}", message),
+            LogLevel::Error => error!(component = %component, "{}", message),
+            LogLevel::Critical => error!(component = %component, "CRITICAL: {}", message),
         }
 
         Ok(())

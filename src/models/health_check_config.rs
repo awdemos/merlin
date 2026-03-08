@@ -52,7 +52,10 @@ impl HealthCheckConfig {
 
     /// Create an HTTP health check
     pub fn http_check(port: u16, path: String) -> Self {
-        Self::new(format!("curl -f http://localhost:{}{} || exit 1", port, path))
+        Self::new(format!(
+            "curl -f http://localhost:{}{} || exit 1",
+            port, path
+        ))
     }
 
     /// Create a TCP health check
@@ -98,41 +101,57 @@ impl HealthCheckConfig {
     /// Validate the health check configuration
     pub fn validate(&self) -> Result<(), HealthCheckError> {
         if self.command.is_empty() {
-            return Err(HealthCheckError::InvalidCommand("Health check command cannot be empty".to_string()));
+            return Err(HealthCheckError::InvalidCommand(
+                "Health check command cannot be empty".to_string(),
+            ));
         }
 
         if self.interval_seconds == 0 {
-            return Err(HealthCheckError::InvalidInterval("Interval must be greater than 0".to_string()));
+            return Err(HealthCheckError::InvalidInterval(
+                "Interval must be greater than 0".to_string(),
+            ));
         }
 
         if self.interval_seconds > 3600 {
-            return Err(HealthCheckError::InvalidInterval("Interval must be less than 3600 seconds".to_string()));
+            return Err(HealthCheckError::InvalidInterval(
+                "Interval must be less than 3600 seconds".to_string(),
+            ));
         }
 
         if self.timeout_seconds == 0 {
-            return Err(HealthCheckError::InvalidTimeout("Timeout must be greater than 0".to_string()));
+            return Err(HealthCheckError::InvalidTimeout(
+                "Timeout must be greater than 0".to_string(),
+            ));
         }
 
         if self.timeout_seconds > 300 {
-            return Err(HealthCheckError::InvalidTimeout("Timeout must be less than 300 seconds".to_string()));
+            return Err(HealthCheckError::InvalidTimeout(
+                "Timeout must be less than 300 seconds".to_string(),
+            ));
         }
 
         if self.retries == 0 {
-            return Err(HealthCheckError::InvalidRetries("Retries must be greater than 0".to_string()));
+            return Err(HealthCheckError::InvalidRetries(
+                "Retries must be greater than 0".to_string(),
+            ));
         }
 
         if self.retries > 10 {
-            return Err(HealthCheckError::InvalidRetries("Retries must be less than 10".to_string()));
+            return Err(HealthCheckError::InvalidRetries(
+                "Retries must be less than 10".to_string(),
+            ));
         }
 
         if self.start_period_seconds > 600 {
-            return Err(HealthCheckError::InvalidStartPeriod("Start period must be less than 600 seconds".to_string()));
+            return Err(HealthCheckError::InvalidStartPeriod(
+                "Start period must be less than 600 seconds".to_string(),
+            ));
         }
 
         // Validate command doesn't contain dangerous operations
         if self.is_dangerous_command() {
             return Err(HealthCheckError::SecurityViolation(
-                "Health check command contains potentially dangerous operations".to_string()
+                "Health check command contains potentially dangerous operations".to_string(),
             ));
         }
 
@@ -147,18 +166,18 @@ impl HealthCheckConfig {
         let command_lower = self.command.to_lowercase();
 
         // Dangerous commands that could compromise container security
-        command_lower.contains("rm -rf") ||
-        command_lower.contains("chmod 777") ||
-        command_lower.contains("chown root") ||
-        command_lower.contains("sudo") ||
-        command_lower.contains("su -") ||
-        command_lower.contains("/bin/bash") ||
-        command_lower.contains("/bin/sh") ||
-        command_lower.contains("wget ") ||
-        command_lower.contains("curl ") && command_lower.contains(" -o ") ||
-        command_lower.contains("exec") ||
-        command_lower.contains("eval") ||
-        command_lower.contains("system(")
+        command_lower.contains("rm -rf")
+            || command_lower.contains("chmod 777")
+            || command_lower.contains("chown root")
+            || command_lower.contains("sudo")
+            || command_lower.contains("su -")
+            || command_lower.contains("/bin/bash")
+            || command_lower.contains("/bin/sh")
+            || command_lower.contains("wget ")
+            || command_lower.contains("curl ") && command_lower.contains(" -o ")
+            || command_lower.contains("exec")
+            || command_lower.contains("eval")
+            || command_lower.contains("system(")
     }
 
     /// Generate Docker health check arguments
@@ -215,7 +234,7 @@ impl HealthCheckConfig {
 
     /// Calculate maximum time before container is considered unhealthy
     pub fn max_unhealthy_time(&self) -> Duration {
-        self.interval_duration() * (self.retries as u64) + self.timeout_duration()
+        self.interval_duration() * self.retries + self.timeout_duration()
     }
 
     /// Check if this is an HTTP health check
@@ -300,7 +319,8 @@ impl HealthCheckConfig {
             }
             "staging" => {
                 // Balanced settings for staging
-                config.interval_seconds = std::cmp::max(15, std::cmp::min(45, config.interval_seconds));
+                config.interval_seconds =
+                    std::cmp::max(15, std::cmp::min(45, config.interval_seconds));
             }
             _ => {}
         }
@@ -317,7 +337,13 @@ impl fmt::Display for HealthCheckConfig {
             self.interval_seconds,
             self.timeout_seconds,
             self.retries,
-            if self.is_http_check() { "HTTP" } else if self.is_tcp_check() { "TCP" } else { "Command" },
+            if self.is_http_check() {
+                "HTTP"
+            } else if self.is_tcp_check() {
+                "TCP"
+            } else {
+                "Command"
+            },
             self.reliability_score()
         )
     }
@@ -398,23 +424,33 @@ impl HealthCheckThresholds {
     /// Validate thresholds
     pub fn validate(&self) -> Result<(), HealthCheckError> {
         if self.response_time_ms == 0 {
-            return Err(HealthCheckError::InvalidThreshold("Response time threshold must be greater than 0".to_string()));
+            return Err(HealthCheckError::InvalidThreshold(
+                "Response time threshold must be greater than 0".to_string(),
+            ));
         }
 
         if self.response_time_ms > 30000 {
-            return Err(HealthCheckError::InvalidThreshold("Response time threshold must be less than 30 seconds".to_string()));
+            return Err(HealthCheckError::InvalidThreshold(
+                "Response time threshold must be less than 30 seconds".to_string(),
+            ));
         }
 
         if self.memory_usage_percent == 0 || self.memory_usage_percent > 100 {
-            return Err(HealthCheckError::InvalidThreshold("Memory usage threshold must be between 1-100%".to_string()));
+            return Err(HealthCheckError::InvalidThreshold(
+                "Memory usage threshold must be between 1-100%".to_string(),
+            ));
         }
 
         if self.cpu_usage_percent == 0 || self.cpu_usage_percent > 100 {
-            return Err(HealthCheckError::InvalidThreshold("CPU usage threshold must be between 1-100%".to_string()));
+            return Err(HealthCheckError::InvalidThreshold(
+                "CPU usage threshold must be between 1-100%".to_string(),
+            ));
         }
 
         if self.success_rate_percent == 0 || self.success_rate_percent > 100 {
-            return Err(HealthCheckError::InvalidThreshold("Success rate threshold must be between 1-100%".to_string()));
+            return Err(HealthCheckError::InvalidThreshold(
+                "Success rate threshold must be between 1-100%".to_string(),
+            ));
         }
 
         Ok(())
@@ -446,22 +482,30 @@ impl HealthCheckThresholds {
     }
 
     /// Calculate overall threshold compliance score (0-100)
-    pub fn compliance_score(&self, response_time_ms: u32, memory_usage_percent: u8, cpu_usage_percent: u8) -> u8 {
-        let mut score = 100;
+    pub fn compliance_score(
+        &self,
+        response_time_ms: u32,
+        memory_usage_percent: u8,
+        cpu_usage_percent: u8,
+    ) -> u8 {
+        let mut score: u8 = 100;
 
         if !self.is_response_time_acceptable(response_time_ms) {
             let overage = response_time_ms.saturating_sub(self.response_time_ms);
-            score = score.saturating_sub((overage as f64 / self.response_time_ms as f64 * 20.0) as u8);
+            let penalty: u8 = (overage as f64 / self.response_time_ms as f64 * 20.0) as u8;
+            score = score.saturating_sub(penalty);
         }
 
         if !self.is_memory_usage_acceptable(memory_usage_percent) {
             let overage = memory_usage_percent.saturating_sub(self.memory_usage_percent);
-            score = score.saturating_sub((overage as f64 / self.memory_usage_percent as f64 * 20.0) as u8);
+            let penalty: u8 = (overage as f64 / self.memory_usage_percent as f64 * 20.0) as u8;
+            score = score.saturating_sub(penalty);
         }
 
         if !self.is_cpu_usage_acceptable(cpu_usage_percent) {
             let overage = cpu_usage_percent.saturating_sub(self.cpu_usage_percent);
-            score = score.saturating_sub((overage as f64 / self.cpu_usage_percent as f64 * 20.0) as u8);
+            let penalty: u8 = (overage as f64 / self.cpu_usage_percent as f64 * 20.0) as u8;
+            score = score.saturating_sub(penalty);
         }
 
         score.max(0).min(100)
@@ -542,20 +586,29 @@ mod tests {
     #[test]
     fn test_validate_empty_command() {
         let health = HealthCheckConfig::new("".to_string());
-        assert!(matches!(health.validate(), Err(HealthCheckError::InvalidCommand(_))));
+        assert!(matches!(
+            health.validate(),
+            Err(HealthCheckError::InvalidCommand(_))
+        ));
     }
 
     #[test]
     fn test_validate_zero_interval() {
         let mut health = HealthCheckConfig::default();
         health.interval_seconds = 0;
-        assert!(matches!(health.validate(), Err(HealthCheckError::InvalidInterval(_))));
+        assert!(matches!(
+            health.validate(),
+            Err(HealthCheckError::InvalidInterval(_))
+        ));
     }
 
     #[test]
     fn test_validate_dangerous_command() {
         let health = HealthCheckConfig::new("rm -rf /".to_string());
-        assert!(matches!(health.validate(), Err(HealthCheckError::SecurityViolation(_))));
+        assert!(matches!(
+            health.validate(),
+            Err(HealthCheckError::SecurityViolation(_))
+        ));
     }
 
     #[test]

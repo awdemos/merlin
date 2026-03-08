@@ -113,7 +113,7 @@ pub struct PreferenceUpdateRequest {
     pub category: PreferenceCategory,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Validate, Clone)]
 pub struct PreferenceDeleteRequest {
     #[validate(length(min = 1, message = "User ID is required"))]
     pub user_id: String,
@@ -201,7 +201,11 @@ impl UserPreference {
                 .into_iter()
                 .flat_map(|(field, errors)| {
                     errors.into_iter().map(move |error| {
-                        format!("{}: {}", field, error.message.as_ref().unwrap_or(&"invalid value".into()))
+                        format!(
+                            "{}: {}",
+                            field,
+                            error.message.as_ref().unwrap_or(&"invalid value".into())
+                        )
                     })
                 })
                 .collect();
@@ -338,7 +342,11 @@ impl PreferenceUpdateRequest {
                 .into_iter()
                 .flat_map(|(field, errors)| {
                     errors.into_iter().map(move |error| {
-                        format!("{}: {}", field, error.message.as_ref().unwrap_or(&"invalid value".into()))
+                        format!(
+                            "{}: {}",
+                            field,
+                            error.message.as_ref().unwrap_or(&"invalid value".into())
+                        )
                     })
                 })
                 .collect();
@@ -363,7 +371,11 @@ impl PreferenceDeleteRequest {
                 .into_iter()
                 .flat_map(|(field, errors)| {
                     errors.into_iter().map(move |error| {
-                        format!("{}: {}", field, error.message.as_ref().unwrap_or(&"invalid value".into()))
+                        format!(
+                            "{}: {}",
+                            field,
+                            error.message.as_ref().unwrap_or(&"invalid value".into())
+                        )
                     })
                 })
                 .collect();
@@ -432,8 +444,14 @@ mod tests {
 
     #[test]
     fn test_preference_category_conversion() {
-        assert_eq!(PreferenceCategory::ModelSelection.as_str(), "ModelSelection");
-        assert_eq!(PreferenceCategory::from_str("ModelSelection"), Some(PreferenceCategory::ModelSelection));
+        assert_eq!(
+            PreferenceCategory::ModelSelection.as_str(),
+            "ModelSelection"
+        );
+        assert_eq!(
+            PreferenceCategory::from_str("ModelSelection"),
+            Some(PreferenceCategory::ModelSelection)
+        );
         assert_eq!(PreferenceCategory::from_str("Invalid"), None);
     }
 
@@ -478,10 +496,8 @@ mod tests {
 
     #[test]
     fn test_preference_delete_request() {
-        let request = PreferenceDeleteRequest::new(
-            "user123".to_string(),
-            "old_preference".to_string(),
-        );
+        let request =
+            PreferenceDeleteRequest::new("user123".to_string(), "old_preference".to_string());
 
         assert!(request.validate_request().is_ok());
         assert_eq!(request.user_id, "user123");

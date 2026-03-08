@@ -175,11 +175,13 @@ impl APIError {
     }
 
     pub fn validation(message: String, field: Option<String>) -> Self {
-        let details = field.map(|f| vec![ErrorDetail {
-            field: Some(f),
-            message: message.clone(),
-            code: Some("INVALID_VALUE".to_string()),
-        }]);
+        let details = field.map(|f| {
+            vec![ErrorDetail {
+                field: Some(f),
+                message: message.clone(),
+                code: Some("INVALID_VALUE".to_string()),
+            }]
+        });
         Self::new(ErrorCode::ValidationError, message, details)
     }
 
@@ -328,7 +330,10 @@ macro_rules! api_response {
         $crate::models::api_response::APIResponse::validation_error($message.to_string(), None)
     };
     (validation_error, $message:expr, $details:expr) => {
-        $crate::models::api_response::APIResponse::validation_error($message.to_string(), Some($details))
+        $crate::models::api_response::APIResponse::validation_error(
+            $message.to_string(),
+            Some($details),
+        )
     };
     (not_found, $message:expr) => {
         $crate::models::api_response::APIResponse::not_found($message.to_string())
@@ -370,7 +375,8 @@ mod tests {
 
     #[test]
     fn test_api_error_creation() {
-        let error = APIError::validation("Invalid field".to_string(), Some("field_name".to_string()));
+        let error =
+            APIError::validation("Invalid field".to_string(), Some("field_name".to_string()));
         assert_eq!(error.code, "VALIDATION_ERROR");
         assert_eq!(error.message, "Invalid field");
         assert!(error.details.is_some());

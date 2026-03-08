@@ -311,7 +311,7 @@ async fn handle_container_status(
         "timestamp": chrono::Utc::now().to_rfc3339()
     });
 
-    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::OK))
+    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
 }
 
 /// Handle container metrics requests
@@ -324,7 +324,7 @@ async fn handle_container_metrics(
         "timestamp": chrono::Utc::now().to_rfc3339()
     });
 
-    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::OK))
+    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
 }
 
 /// Handle container events requests
@@ -333,7 +333,7 @@ async fn handle_container_events(
     service: ContainerStateService,
 ) -> Result<impl Reply, Rejection> {
     let events = if let Some(container_id) = query.container_id {
-        service.get_container_events(container_id).await.unwrap_or_else(Vec::new)
+        service.get_container_events(container_id).await.unwrap_or_else(|_| Vec::new())
     } else {
         // Return events from all containers
         let all_events = service.container_events.read().await;
@@ -364,7 +364,7 @@ async fn handle_container_events(
         "timestamp": chrono::Utc::now().to_rfc3339()
     });
 
-    Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::OK))
+    Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK))
 }
 
 /// Handle container operation requests
@@ -380,7 +380,7 @@ async fn handle_container_operation(
                 "status": "error",
                 "message": "Invalid container ID format"
             });
-            return Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST));
+            return Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST));
         }
     };
 
@@ -404,7 +404,7 @@ async fn handle_container_operation(
                 "container_id": container_id,
                 "timestamp": chrono::Utc::now().to_rfc3339()
             });
-            Ok(warp::reply::with_status(json!(response), if success {
+            Ok(warp::reply::with_status(warp::reply::json(&response), if success {
                 warp::http::StatusCode::OK
             } else {
                 warp::http::StatusCode::NOT_FOUND
@@ -417,7 +417,7 @@ async fn handle_container_operation(
                 "message": e.to_string(),
                 "container_id": container_id
             });
-            Ok(warp::reply::with_status(json!(response), warp::http::StatusCode::BAD_REQUEST))
+            Ok(warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::BAD_REQUEST))
         }
     }
 }

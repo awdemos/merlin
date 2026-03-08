@@ -1,8 +1,11 @@
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
+//! Data models for feature numbering.
+
 use crate::feature_numbering::error::FeatureNumberingError;
 use crate::feature_numbering::error::Result;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
+/// Status of a feature in its lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FeatureStatus {
     Draft,
@@ -14,6 +17,7 @@ pub enum FeatureStatus {
     OnHold,
 }
 
+/// Priority level for a feature.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FeaturePriority {
     Low,
@@ -22,6 +26,7 @@ pub enum FeaturePriority {
     Critical,
 }
 
+/// Type of reference between features.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ReferenceType {
     Dependency,
@@ -31,13 +36,20 @@ pub enum ReferenceType {
     BlockedBy,
 }
 
+/// Metadata associated with a feature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureMetadata {
+    /// Priority level.
     pub priority: FeaturePriority,
+    /// Tags for categorization.
     pub tags: Vec<String>,
+    /// Estimated effort to complete.
     pub estimated_effort: Option<String>,
+    /// Person assigned to the feature.
     pub assignee: Option<String>,
+    /// IDs of features this depends on.
     pub dependencies: Vec<String>,
+    /// IDs of related features.
     pub related_features: Vec<String>,
 }
 
@@ -54,20 +66,31 @@ impl Default for FeatureMetadata {
     }
 }
 
+/// A feature with its tracking information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Feature {
+    /// Unique identifier (e.g., "001-feature-name").
     pub id: String,
+    /// Sequential feature number.
     pub number: u32,
+    /// Short name of the feature.
     pub name: String,
+    /// Detailed description.
     pub description: String,
+    /// Current status.
     pub status: FeatureStatus,
+    /// When the feature was created.
     pub created_at: DateTime<Utc>,
+    /// When the feature was last updated.
     pub updated_at: DateTime<Utc>,
+    /// Optional metadata.
     pub metadata: Option<FeatureMetadata>,
+    /// Git branch name for this feature.
     pub branch_name: String,
 }
 
 impl Feature {
+    /// Creates a new feature with the given number, name, and description.
     pub fn new(number: u32, name: String, description: String) -> Self {
         let now = Utc::now();
         let id = format!("{:03}-{}", number, name);
@@ -215,8 +238,8 @@ mod tests {
 
     #[test]
     fn test_feature_number_assign() {
-        let feature_number = FeatureNumber::new(1, "".to_string())
-            .assign("test-feature".to_string());
+        let feature_number =
+            FeatureNumber::new(1, "".to_string()).assign("test-feature".to_string());
 
         assert!(feature_number.assigned_at.is_some());
         assert_eq!(feature_number.feature_id, Some("test-feature".to_string()));
@@ -230,8 +253,7 @@ mod tests {
         let reserved = FeatureNumber::new(2, "".to_string()).reserve();
         assert!(!reserved.is_available());
 
-        let assigned = FeatureNumber::new(3, "".to_string())
-            .assign("test".to_string());
+        let assigned = FeatureNumber::new(3, "".to_string()).assign("test".to_string());
         assert!(!assigned.is_available());
     }
 

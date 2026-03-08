@@ -290,53 +290,70 @@ impl SecurityProfile {
     pub fn validate(&self) -> Result<(), SecurityProfileError> {
         // Validate user format
         if self.user.is_empty() {
-            return Err(SecurityProfileError::InvalidUser("User cannot be empty".to_string()));
+            return Err(SecurityProfileError::InvalidUser(
+                "User cannot be empty".to_string(),
+            ));
         }
 
         // Check for root user
         if self.user == "root" || self.user == "0" || self.user == "0:0" {
             return Err(SecurityProfileError::SecurityViolation(
-                "Container should not run as root user".to_string()
+                "Container should not run as root user".to_string(),
             ));
         }
 
         // Validate capabilities
         for cap in &self.capabilities_drop {
             if !self.is_valid_capability(cap) {
-                return Err(SecurityProfileError::InvalidCapability(format!("Invalid capability to drop: {}", cap)));
+                return Err(SecurityProfileError::InvalidCapability(format!(
+                    "Invalid capability to drop: {}",
+                    cap
+                )));
             }
         }
 
         for cap in &self.capabilities_add {
             if !self.is_valid_capability(cap) {
-                return Err(SecurityProfileError::InvalidCapability(format!("Invalid capability to add: {}", cap)));
+                return Err(SecurityProfileError::InvalidCapability(format!(
+                    "Invalid capability to add: {}",
+                    cap
+                )));
             }
         }
 
         // Validate dangerous capability combinations
         if self.capabilities_add.contains("ALL") && !self.capabilities_drop.is_empty() {
             return Err(SecurityProfileError::InvalidCapability(
-                "Cannot drop capabilities when adding ALL".to_string()
+                "Cannot drop capabilities when adding ALL".to_string(),
             ));
         }
 
         // Validate security options
         for option in &self.security_options {
             if !self.is_valid_security_option(option) {
-                return Err(SecurityProfileError::InvalidSecurityOption(format!("Invalid security option: {}", option)));
+                return Err(SecurityProfileError::InvalidSecurityOption(format!(
+                    "Invalid security option: {}",
+                    option
+                )));
             }
         }
 
         // Validate paths
         for path in &self.read_only_paths {
             if !self.is_valid_path(path) {
-                return Err(SecurityProfileError::InvalidPath(format!("Invalid read-only path: {}", path)));
+                return Err(SecurityProfileError::InvalidPath(format!(
+                    "Invalid read-only path: {}",
+                    path
+                )));
             }
         }
 
         for path in &self.read_write_paths {
             if !self.is_valid_path(path) {
-                return Err(SecurityProfileError::InvalidPath(format!("Invalid read-write path: {}", path)));
+                return Err(SecurityProfileError::InvalidPath(format!(
+                    "Invalid read-write path: {}",
+                    path
+                )));
             }
         }
 
@@ -350,13 +367,44 @@ impl SecurityProfile {
     fn is_valid_capability(&self, cap: &str) -> bool {
         // List of valid Linux capabilities
         let valid_caps = [
-            "ALL", "AUDIT_CONTROL", "AUDIT_WRITE", "BLOCK_SUSPEND", "CHOWN", "DAC_OVERRIDE",
-            "DAC_READ_SEARCH", "FOWNER", "FSETID", "IPC_LOCK", "IPC_OWNER", "KILL",
-            "LEASE", "LINUX_IMMUTABLE", "MAC_ADMIN", "MAC_OVERRIDE", "MKNOD", "NET_ADMIN",
-            "NET_BIND_SERVICE", "NET_BROADCAST", "NET_RAW", "SETGID", "SETFCAP", "SETPCAP",
-            "SETUID", "SYS_ADMIN", "SYS_BOOT", "SYS_CHROOT", "SYS_MODULE", "SYS_NICE",
-            "SYS_PACCT", "SYS_PTRACE", "SYS_RAWIO", "SYS_RESOURCE", "SYS_TIME", "SYS_TTY_CONFIG",
-            "SYSLOG", "WAKE_ALARM"
+            "ALL",
+            "AUDIT_CONTROL",
+            "AUDIT_WRITE",
+            "BLOCK_SUSPEND",
+            "CHOWN",
+            "DAC_OVERRIDE",
+            "DAC_READ_SEARCH",
+            "FOWNER",
+            "FSETID",
+            "IPC_LOCK",
+            "IPC_OWNER",
+            "KILL",
+            "LEASE",
+            "LINUX_IMMUTABLE",
+            "MAC_ADMIN",
+            "MAC_OVERRIDE",
+            "MKNOD",
+            "NET_ADMIN",
+            "NET_BIND_SERVICE",
+            "NET_BROADCAST",
+            "NET_RAW",
+            "SETGID",
+            "SETFCAP",
+            "SETPCAP",
+            "SETUID",
+            "SYS_ADMIN",
+            "SYS_BOOT",
+            "SYS_CHROOT",
+            "SYS_MODULE",
+            "SYS_NICE",
+            "SYS_PACCT",
+            "SYS_PTRACE",
+            "SYS_RAWIO",
+            "SYS_RESOURCE",
+            "SYS_TIME",
+            "SYS_TTY_CONFIG",
+            "SYSLOG",
+            "WAKE_ALARM",
         ];
 
         valid_caps.contains(&cap) || cap.chars().all(|c| c.is_uppercase() || c == '_')
@@ -365,10 +413,18 @@ impl SecurityProfile {
     /// Check if security option is valid
     fn is_valid_security_option(&self, option: &str) -> bool {
         let valid_options = [
-            "no-new-privileges", "apparmor", "seccomp", "label", "userns", "mask", "readonly"
+            "no-new-privileges",
+            "apparmor",
+            "seccomp",
+            "label",
+            "userns",
+            "mask",
+            "readonly",
         ];
 
-        valid_options.contains(&option) || option.starts_with("apparmor=") || option.starts_with("seccomp=")
+        valid_options.contains(&option)
+            || option.starts_with("apparmor=")
+            || option.starts_with("seccomp=")
     }
 
     /// Check if path is valid
@@ -383,7 +439,7 @@ impl SecurityProfile {
                 // Minimal requirements
                 if self.user == "root" || self.user == "0" {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "Minimal security level requires non-root user".to_string()
+                        "Minimal security level requires non-root user".to_string(),
                     ));
                 }
             }
@@ -391,7 +447,7 @@ impl SecurityProfile {
                 // Standard requirements
                 if !self.no_new_privileges {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "Standard security level requires no-new-privileges".to_string()
+                        "Standard security level requires no-new-privileges".to_string(),
                     ));
                 }
             }
@@ -399,17 +455,17 @@ impl SecurityProfile {
                 // High requirements
                 if !self.read_only {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "High security level requires read-only filesystem".to_string()
+                        "High security level requires read-only filesystem".to_string(),
                     ));
                 }
                 if !self.no_new_privileges {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "High security level requires no-new-privileges".to_string()
+                        "High security level requires no-new-privileges".to_string(),
                     ));
                 }
                 if self.capabilities_drop.is_empty() {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "High security level requires dropped capabilities".to_string()
+                        "High security level requires dropped capabilities".to_string(),
                     ));
                 }
             }
@@ -417,17 +473,17 @@ impl SecurityProfile {
                 // Maximum requirements
                 if !self.read_only {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "Maximum security level requires read-only filesystem".to_string()
+                        "Maximum security level requires read-only filesystem".to_string(),
                     ));
                 }
                 if !self.no_new_privileges {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "Maximum security level requires no-new-privileges".to_string()
+                        "Maximum security level requires no-new-privileges".to_string(),
                     ));
                 }
                 if self.seccomp_profile.is_none() {
                     return Err(SecurityProfileError::SecurityViolation(
-                        "Maximum security level requires seccomp profile".to_string()
+                        "Maximum security level requires seccomp profile".to_string(),
                     ));
                 }
             }
@@ -454,12 +510,24 @@ impl SecurityProfile {
         // Capabilities
         if !self.capabilities_drop.is_empty() {
             args.push("--cap-drop".to_string());
-            args.push(self.capabilities_drop.iter().cloned().collect::<Vec<_>>().join(","));
+            args.push(
+                self.capabilities_drop
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
 
         if !self.capabilities_add.is_empty() {
             args.push("--cap-add".to_string());
-            args.push(self.capabilities_add.iter().cloned().collect::<Vec<_>>().join(","));
+            args.push(
+                self.capabilities_add
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
 
         // Security options
@@ -469,7 +537,11 @@ impl SecurityProfile {
         }
 
         // No new privileges
-        if self.no_new_privileges && !self.security_options.contains(&"no-new-privileges".to_string()) {
+        if self.no_new_privileges
+            && !self
+                .security_options
+                .contains(&"no-new-privileges".to_string())
+        {
             args.push("--security-opt".to_string());
             args.push("no-new-privileges".to_string());
         }
@@ -515,7 +587,10 @@ impl SecurityProfile {
         // Read-only and read-write paths
         for path in &self.read_only_paths {
             args.push("--mount".to_string());
-            args.push(format!("type=bind,source={},target={},readonly", path, path));
+            args.push(format!(
+                "type=bind,source={},target={},readonly",
+                path, path
+            ));
         }
 
         for path in &self.read_write_paths {
@@ -615,19 +690,19 @@ impl SecurityProfile {
 
     /// Check CIS Docker Benchmark compliance
     fn cis_compliant(&self) -> bool {
-        self.user != "root" &&
-        self.no_new_privileges &&
-        !self.capabilities_add.contains("ALL") &&
-        self.security_score() >= 70
+        self.user != "root"
+            && self.no_new_privileges
+            && !self.capabilities_add.contains("ALL")
+            && self.security_score() >= 70
     }
 
     /// Check NIST 800-190 compliance
     fn nist_compliant(&self) -> bool {
-        self.user != "root" &&
-        self.no_new_privileges &&
-        self.read_only &&
-        self.seccomp_profile.is_some() &&
-        self.security_score() >= 80
+        self.user != "root"
+            && self.no_new_privileges
+            && self.read_only
+            && self.seccomp_profile.is_some()
+            && self.security_score() >= 80
     }
 }
 
@@ -765,13 +840,19 @@ mod tests {
     #[test]
     fn test_validate_root_user() {
         let profile = SecurityProfile::minimal().with_user("root".to_string());
-        assert!(matches!(profile.validate(), Err(SecurityProfileError::SecurityViolation(_))));
+        assert!(matches!(
+            profile.validate(),
+            Err(SecurityProfileError::SecurityViolation(_))
+        ));
     }
 
     #[test]
     fn test_validate_invalid_capability() {
         let profile = SecurityProfile::minimal().drop_capability("INVALID_CAP".to_string());
-        assert!(matches!(profile.validate(), Err(SecurityProfileError::InvalidCapability(_))));
+        assert!(matches!(
+            profile.validate(),
+            Err(SecurityProfileError::InvalidCapability(_))
+        ));
     }
 
     #[test]

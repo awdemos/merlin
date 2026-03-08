@@ -1,3 +1,8 @@
+//! Feature numbering system for tracking and managing feature identifiers.
+//!
+//! This module provides a centralized system for assigning and tracking
+//! unique feature numbers across the application.
+
 pub mod api;
 pub mod data_models;
 pub mod error;

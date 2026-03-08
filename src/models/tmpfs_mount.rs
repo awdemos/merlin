@@ -108,23 +108,30 @@ impl TmpfsMount {
     /// Validate the tmpfs mount configuration
     pub fn validate(&self) -> Result<(), TmpfsMountError> {
         if self.mount_point.as_os_str().is_empty() {
-            return Err(TmpfsMountError::InvalidMountPoint("Mount point cannot be empty".to_string()));
+            return Err(TmpfsMountError::InvalidMountPoint(
+                "Mount point cannot be empty".to_string(),
+            ));
         }
 
         // Validate mount point is an absolute path
         if !self.mount_point.is_absolute() {
-            return Err(TmpfsMountError::InvalidMountPoint("Mount point must be an absolute path".to_string()));
+            return Err(TmpfsMountError::InvalidMountPoint(
+                "Mount point must be an absolute path".to_string(),
+            ));
         }
 
         // Validate size format
         if !self.is_valid_size(&self.size) {
-            return Err(TmpfsMountError::InvalidSize(format!("Invalid size format: {}", self.size)));
+            return Err(TmpfsMountError::InvalidSize(format!(
+                "Invalid size format: {}",
+                self.size
+            )));
         }
 
         // Validate dangerous mount points
         if self.is_dangerous_mount_point() {
             return Err(TmpfsMountError::SecurityViolation(
-                "Mount point is not allowed for security reasons".to_string()
+                "Mount point is not allowed for security reasons".to_string(),
             ));
         }
 
@@ -138,7 +145,7 @@ impl TmpfsMount {
         }
 
         // Extract numeric part
-        let numeric_part = size.trim_end_matches(|c| c.is_alphabetic());
+        let numeric_part = size.trim_end_matches(|c: char| c.is_alphabetic());
         if numeric_part.is_empty() {
             return false;
         }
@@ -151,7 +158,10 @@ impl TmpfsMount {
 
         // Check unit
         let unit = size.trim_start_matches(numeric_part);
-        matches!(unit.to_lowercase().as_str(), "k" | "kb" | "m" | "mb" | "g" | "gb" | "t" | "tb")
+        matches!(
+            unit.to_lowercase().as_str(),
+            "k" | "kb" | "m" | "mb" | "g" | "gb" | "t" | "tb"
+        )
     }
 
     /// Check if mount point is potentially dangerous
@@ -159,15 +169,15 @@ impl TmpfsMount {
         let mount_str = self.mount_point.to_string_lossy().to_lowercase();
 
         // System-critical directories
-        mount_str.starts_with("/bin") ||
-        mount_str.starts_with("/sbin") ||
-        mount_str.starts_with("/lib") ||
-        mount_str.starts_with("/usr") ||
-        mount_str.starts_with("/etc") ||
-        mount_str.starts_with("/boot") ||
-        mount_str.starts_with("/dev") ||
-        mount_str.starts_with("/proc") ||
-        mount_str.starts_with("/sys")
+        mount_str.starts_with("/bin")
+            || mount_str.starts_with("/sbin")
+            || mount_str.starts_with("/lib")
+            || mount_str.starts_with("/usr")
+            || mount_str.starts_with("/etc")
+            || mount_str.starts_with("/boot")
+            || mount_str.starts_with("/dev")
+            || mount_str.starts_with("/proc")
+            || mount_str.starts_with("/sys")
     }
 
     /// Get size in bytes
@@ -187,7 +197,12 @@ impl TmpfsMount {
             "m" | "mb" => 1024 * 1024,
             "g" | "gb" => 1024 * 1024 * 1024,
             "t" | "tb" => 1024 * 1024 * 1024 * 1024,
-            _ => return Err(TmpfsMountError::InvalidSize(format!("Unknown unit: {}", unit))),
+            _ => {
+                return Err(TmpfsMountError::InvalidSize(format!(
+                    "Unknown unit: {}",
+                    unit
+                )))
+            }
         };
 
         Ok(num * multiplier)
@@ -231,9 +246,11 @@ impl TmpfsMount {
 
         // Penalize large tmpfs mounts
         if let Ok(size_bytes) = self.size_bytes() {
-            if size_bytes > 1024 * 1024 * 1024 { // > 1GB
+            if size_bytes > 1024 * 1024 * 1024 {
+                // > 1GB
                 score -= 20;
-            } else if size_bytes > 512 * 1024 * 1024 { // > 512MB
+            } else if size_bytes > 512 * 1024 * 1024 {
+                // > 512MB
                 score -= 10;
             }
         }
@@ -352,25 +369,37 @@ mod tests {
     fn test_validate_empty_mount_point() {
         let mut tmpfs = TmpfsMount::for_tmp("100m".to_string());
         tmpfs.mount_point = PathBuf::new();
-        assert!(matches!(tmpfs.validate(), Err(TmpfsMountError::InvalidMountPoint(_))));
+        assert!(matches!(
+            tmpfs.validate(),
+            Err(TmpfsMountError::InvalidMountPoint(_))
+        ));
     }
 
     #[test]
     fn test_validate_relative_path() {
         let tmpfs = TmpfsMount::new("relative/path", "100m".to_string());
-        assert!(matches!(tmpfs.validate(), Err(TmpfsMountError::InvalidMountPoint(_))));
+        assert!(matches!(
+            tmpfs.validate(),
+            Err(TmpfsMountError::InvalidMountPoint(_))
+        ));
     }
 
     #[test]
     fn test_validate_invalid_size() {
         let tmpfs = TmpfsMount::for_tmp("invalid".to_string());
-        assert!(matches!(tmpfs.validate(), Err(TmpfsMountError::InvalidSize(_))));
+        assert!(matches!(
+            tmpfs.validate(),
+            Err(TmpfsMountError::InvalidSize(_))
+        ));
     }
 
     #[test]
     fn test_validate_dangerous_mount_point() {
         let tmpfs = TmpfsMount::new("/bin", "100m".to_string());
-        assert!(matches!(tmpfs.validate(), Err(TmpfsMountError::SecurityViolation(_))));
+        assert!(matches!(
+            tmpfs.validate(),
+            Err(TmpfsMountError::SecurityViolation(_))
+        ));
     }
 
     #[test]
@@ -405,7 +434,8 @@ mod tests {
     #[test]
     fn test_security_score() {
         let secure = TmpfsMount::for_tmp("50m".to_string()).no_exec().read_only();
-        let insecure = TmpfsMount::new("/custom", "2g".to_string()).with_options("exec".to_string());
+        let insecure =
+            TmpfsMount::new("/custom", "2g".to_string()).with_options("exec".to_string());
 
         assert!(secure.security_score() > insecure.security_score());
     }

@@ -32,9 +32,9 @@ pub struct ResourceLimits {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            memory_mb: 512,      // 512MB default memory
-            cpu_shares: 1.0,     // 1 CPU default
-            pids_limit: 100,     // 100 processes default
+            memory_mb: 512,  // 512MB default memory
+            cpu_shares: 1.0, // 1 CPU default
+            pids_limit: 100, // 100 processes default
             blkio_weight: None,
             network_limit_mbps: None,
             disk_limit_gb: None,
@@ -117,50 +117,70 @@ impl ResourceLimits {
     /// Validate resource limits
     pub fn validate(&self) -> Result<(), ResourceLimitsError> {
         if self.memory_mb == 0 {
-            return Err(ResourceLimitsError::InvalidMemory("Memory limit cannot be zero".to_string()));
+            return Err(ResourceLimitsError::InvalidMemory(
+                "Memory limit cannot be zero".to_string(),
+            ));
         }
 
         if self.memory_mb > 65536 {
-            return Err(ResourceLimitsError::InvalidMemory("Memory limit too high (max 64GB)".to_string()));
+            return Err(ResourceLimitsError::InvalidMemory(
+                "Memory limit too high (max 64GB)".to_string(),
+            ));
         }
 
         if self.cpu_shares <= 0.0 {
-            return Err(ResourceLimitsError::InvalidCPU("CPU shares must be positive".to_string()));
+            return Err(ResourceLimitsError::InvalidCPU(
+                "CPU shares must be positive".to_string(),
+            ));
         }
 
         if self.cpu_shares > 64.0 {
-            return Err(ResourceLimitsError::InvalidCPU("CPU shares too high (max 64)".to_string()));
+            return Err(ResourceLimitsError::InvalidCPU(
+                "CPU shares too high (max 64)".to_string(),
+            ));
         }
 
         if self.pids_limit == 0 {
-            return Err(ResourceLimitsError::InvalidPids("PIDs limit cannot be zero".to_string()));
+            return Err(ResourceLimitsError::InvalidPids(
+                "PIDs limit cannot be zero".to_string(),
+            ));
         }
 
         if self.pids_limit > 10000 {
-            return Err(ResourceLimitsError::InvalidPids("PIDs limit too high (max 10000)".to_string()));
+            return Err(ResourceLimitsError::InvalidPids(
+                "PIDs limit too high (max 10000)".to_string(),
+            ));
         }
 
         if let Some(blkio_weight) = self.blkio_weight {
             if blkio_weight < 10 || blkio_weight > 1000 {
-                return Err(ResourceLimitsError::InvalidBlkio("Block I/O weight must be between 10-1000".to_string()));
+                return Err(ResourceLimitsError::InvalidBlkio(
+                    "Block I/O weight must be between 10-1000".to_string(),
+                ));
             }
         }
 
         if let Some(network_limit) = self.network_limit_mbps {
             if network_limit > 10000 {
-                return Err(ResourceLimitsError::InvalidNetwork("Network limit too high (max 10000 Mbps)".to_string()));
+                return Err(ResourceLimitsError::InvalidNetwork(
+                    "Network limit too high (max 10000 Mbps)".to_string(),
+                ));
             }
         }
 
         if let Some(disk_limit) = self.disk_limit_gb {
             if disk_limit > 1000 {
-                return Err(ResourceLimitsError::InvalidDisk("Disk limit too high (max 1000 GB)".to_string()));
+                return Err(ResourceLimitsError::InvalidDisk(
+                    "Disk limit too high (max 1000 GB)".to_string(),
+                ));
             }
         }
 
         if let Some(gpu_memory) = self.gpu_memory_mb {
             if gpu_memory > 81920 {
-                return Err(ResourceLimitsError::InvalidGpuMemory("GPU memory limit too high (max 80GB)".to_string()));
+                return Err(ResourceLimitsError::InvalidGpuMemory(
+                    "GPU memory limit too high (max 80GB)".to_string(),
+                ));
             }
         }
 
@@ -323,20 +343,29 @@ mod tests {
     #[test]
     fn test_validate_zero_memory() {
         let limits = ResourceLimits::new(0, 1.0);
-        assert!(matches!(limits.validate(), Err(ResourceLimitsError::InvalidMemory(_))));
+        assert!(matches!(
+            limits.validate(),
+            Err(ResourceLimitsError::InvalidMemory(_))
+        ));
     }
 
     #[test]
     fn test_validate_negative_cpu() {
         let limits = ResourceLimits::new(512, -1.0);
-        assert!(matches!(limits.validate(), Err(ResourceLimitsError::InvalidCPU(_))));
+        assert!(matches!(
+            limits.validate(),
+            Err(ResourceLimitsError::InvalidCPU(_))
+        ));
     }
 
     #[test]
     fn test_validate_zero_pids() {
         let mut limits = ResourceLimits::new(512, 1.0);
         limits.pids_limit = 0;
-        assert!(matches!(limits.validate(), Err(ResourceLimitsError::InvalidPids(_))));
+        assert!(matches!(
+            limits.validate(),
+            Err(ResourceLimitsError::InvalidPids(_))
+        ));
     }
 
     #[test]
