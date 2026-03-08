@@ -572,8 +572,11 @@ mod tests {
     #[tokio::test]
     async fn test_docker_client_with_auth() {
         let auth = DockerAuth {
-            username: "test".to_string(),
-            password: "password".to_string(),
+            username: std::env::var("DOCKER_TEST_USERNAME").unwrap_or_else(|_| "test".to_string()),
+            password: std::env::var("DOCKER_TEST_PASSWORD").unwrap_or_else(|_| {
+                // Default for local testing only - never commit real credentials
+                "test_password_for_local_dev_only".to_string()
+            }),
             server_address: "docker.io".to_string(),
         };
         let client = DockerClient::with_auth("unix:///var/run/docker.sock".to_string(), auth);
