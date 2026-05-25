@@ -301,6 +301,7 @@ impl DeploymentEnvironment {
     /// Check if this environment is ready for deployment
     pub fn is_ready_for_deployment(&self) -> bool {
         self.validate().is_ok()
+            && self.resource_limits.is_some()
             && self.deployment_status != DeploymentStatus::Deploying
             && self.deployment_status != DeploymentStatus::Failed
     }
@@ -385,7 +386,7 @@ impl DeploymentEnvironment {
 
     /// Calculate environment health score (0-100)
     pub fn health_score(&self) -> u8 {
-        let mut score = 100;
+        let mut score: u8 = 100;
 
         // Deployment status affects score
         match self.deployment_status {
@@ -407,10 +408,9 @@ impl DeploymentEnvironment {
             }
         }
 
-        // Security profile affects score
+        // Security profile contributes positively to health score
         if let Some(ref profile) = self.security_profile {
-            let security_score = profile.security_score();
-            score = (score + security_score) / 2;
+            score = score.saturating_add(profile.security_score() / 5u8);
         }
 
         // Monitoring affects score
@@ -485,7 +485,7 @@ impl fmt::Display for DeploymentEnvironment {
 }
 
 /// Environment types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EnvironmentType {
     Development,
     Staging,

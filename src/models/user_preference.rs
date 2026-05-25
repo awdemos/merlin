@@ -509,7 +509,7 @@ mod tests {
         let model_pref = UserPreference::new(
             "user123".to_string(),
             "models".to_string(),
-            serde_json!(["gpt-4"]),
+            serde_json::json!(["gpt-4"]),
             PreferenceCategory::ModelSelection,
         );
         assert!(model_pref.is_model_preference());
@@ -518,7 +518,7 @@ mod tests {
         let format_pref = UserPreference::new(
             "user123".to_string(),
             "style".to_string(),
-            serde_json!("concise"),
+            serde_json::json!("concise"),
             PreferenceCategory::ResponseFormatting,
         );
         assert!(format_pref.is_formatting_preference());

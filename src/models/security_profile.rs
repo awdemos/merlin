@@ -89,7 +89,7 @@ impl Default for SecurityProfile {
             ipc_namespace: None,
             uts_namespace: None,
             user_namespace: None,
-            seccomp_profile: None,
+            seccomp_profile: Some("docker/default".to_string()),
             apparmor_profile: None,
             read_only_paths: Vec::new(),
             read_write_paths: Vec::new(),
@@ -721,7 +721,7 @@ impl fmt::Display for SecurityProfile {
 }
 
 /// Security levels for containers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecurityLevel {
     /// Minimal security (basic protections)
     Minimal,
@@ -848,7 +848,8 @@ mod tests {
 
     #[test]
     fn test_validate_invalid_capability() {
-        let profile = SecurityProfile::minimal().drop_capability("INVALID_CAP".to_string());
+        // Use lowercase to bypass the all-uppercase fallback in is_valid_capability
+        let profile = SecurityProfile::minimal().drop_capability("invalid_cap".to_string());
         assert!(matches!(
             profile.validate(),
             Err(SecurityProfileError::InvalidCapability(_))

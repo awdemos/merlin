@@ -578,7 +578,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_retry_policy() {
-        let service = DockerErrorService::new().unwrap();
+        let service = DockerErrorService::new().await.unwrap();
         let policy = service.get_retry_policy("build").await;
 
         assert!(policy.is_some());
@@ -587,7 +587,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_retryable_error() {
-        let service = DockerErrorService::new().unwrap();
+        let service = DockerErrorService::new().await.unwrap();
         let retryable = service.is_retryable_error("build", "network_error").await;
         let not_retryable = service.is_retryable_error("build", "unknown_error").await;
 
@@ -597,7 +597,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculate_retry_delay() {
-        let service = DockerErrorService::new().unwrap();
+        let service = DockerErrorService::new().await.unwrap();
         let delay = service.calculate_retry_delay("build", 1).await;
 
         assert!(delay.is_some());

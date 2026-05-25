@@ -459,18 +459,6 @@ impl PortMapping {
             ));
         }
 
-        if self.container_port > 65535 {
-            return Err(NetworkConfigError::InvalidPort(
-                "Container port must be <= 65535".to_string(),
-            ));
-        }
-
-        if self.host_port > 65535 {
-            return Err(NetworkConfigError::InvalidPort(
-                "Host port must be <= 65535".to_string(),
-            ));
-        }
-
         if self.protocol != "tcp" && self.protocol != "udp" {
             return Err(NetworkConfigError::InvalidProtocol(format!(
                 "Invalid protocol: {}",

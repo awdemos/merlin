@@ -588,7 +588,6 @@ pub struct PerformanceSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
 
     #[test]
     fn test_performance_config() {
@@ -614,7 +613,7 @@ mod tests {
     fn test_performance_metrics() {
         let metrics = PerformanceMetrics {
             id: Uuid::new_v4(),
-            timestamp: SystemTime::now().into(),
+            timestamp: std::time::Instant::now(),
             cpu_usage: 75.5,
             memory_usage: 60.2,
             disk_usage: 45.8,

@@ -447,7 +447,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let volume = VolumeMount::bind_mount(temp_dir.path(), "/container/path").read_only();
         let arg = volume.docker_arg().unwrap();
-        assert!(arg.contains(&temp_dir.path().to_string_lossy()));
+        assert!(arg.contains(&*temp_dir.path().to_string_lossy()));
         assert!(arg.contains("/container/path"));
         assert!(arg.contains("ro"));
     }
