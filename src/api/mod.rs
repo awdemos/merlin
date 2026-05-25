@@ -11,7 +11,7 @@ pub use enhanced_model_select::*;
 pub use model_select::{
     Message, ModelSelectRequest, ModelSelectResponse, OptimizationTarget,
     FeedbackRequest, FeedbackResponse, FeedbackType, ModelAlternative,
-    PromptFeatures, DomainCategory, TaskType, ModelUserPreferences
+    PromptFeatures, DomainCategory, TaskType, Tradeoff, ModelUserPreferences
 };
 // Import preferences types explicitly to avoid conflict
 // Note: Use UserPreferences from preferences module (the canonical one)

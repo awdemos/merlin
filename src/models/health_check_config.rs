@@ -562,7 +562,7 @@ mod tests {
     fn test_tcp_check() {
         let health = HealthCheckConfig::tcp_check(8080);
         assert!(health.command.contains("nc -z"));
-        assert!(health.command.contains("localhost:8080"));
+        assert!(health.command.contains("localhost 8080"));
     }
 
     #[test]

@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn test_validate_preference_value() {
         assert!(validate_preference_value(&serde_json::json!("test")).is_ok());
-        assert!(validate_preference_value(&serde_json!(["test"])).is_ok());
+        assert!(validate_preference_value(&serde_json::json!(["test"])).is_ok());
         assert!(validate_preference_value(&serde_json::json!(null)).is_err());
         assert!(validate_preference_value(&serde_json::json!("")).is_err());
         assert!(validate_preference_value(&serde_json::json!([])).is_err());

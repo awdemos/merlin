@@ -94,7 +94,9 @@ impl ContainerState {
 
     /// Check if container is stopped
     pub fn is_stopped(&self) -> bool {
-        self.status == ContainerStatus::Stopped || self.status == ContainerStatus::Exited
+        self.status == ContainerStatus::Created
+            || self.status == ContainerStatus::Stopped
+            || self.status == ContainerStatus::Exited
     }
 
     /// Check if container is healthy

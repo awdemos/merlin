@@ -212,23 +212,23 @@ impl ResourceLimits {
         let mut score = 100;
 
         // Penalize excessive memory
-        if self.memory_mb > 4096 {
+        if self.memory_mb >= 4096 {
             score -= 20;
-        } else if self.memory_mb > 1024 {
+        } else if self.memory_mb >= 1024 {
             score -= 10;
         }
 
         // Penalize excessive CPU
-        if self.cpu_shares > 4.0 {
+        if self.cpu_shares >= 4.0 {
             score -= 20;
-        } else if self.cpu_shares > 2.0 {
+        } else if self.cpu_shares >= 2.0 {
             score -= 10;
         }
 
         // Penalize excessive PIDs
-        if self.pids_limit > 500 {
+        if self.pids_limit >= 500 {
             score -= 15;
-        } else if self.pids_limit > 200 {
+        } else if self.pids_limit >= 200 {
             score -= 5;
         }
 

@@ -1,6 +1,5 @@
 // examples/model_selection_demo.rs
-use merlin::api::{ModelSelectRequest, Message, OptimizationTarget};
-use merlin::api::model_select::UserPreferences;
+use merlin::api::{ModelSelectRequest, Message, OptimizationTarget, ModelUserPreferences};
 use merlin::IntelligentModelSelector;
 
 #[tokio::main]
@@ -34,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
             "claude-3".to_string(),
             "llama-3.1".to_string(),
         ],
-        preferences: Some(UserPreferences {
+        preferences: Some(ModelUserPreferences {
             optimize_for: Some(OptimizationTarget::Quality),
             max_tokens: Some(1500),
             user_id: None,
@@ -42,6 +41,9 @@ async fn main() -> anyhow::Result<()> {
             custom_weights: None,
         }),
         session_id: None,
+        default_model: None,
+        timeout: None,
+        tradeoff: None,
     };
 
     match selector.select_model(tech_request).await {
@@ -75,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
             "claude-3".to_string(),
             "llama-3.1".to_string(),
         ],
-        preferences: Some(UserPreferences {
+        preferences: Some(ModelUserPreferences {
             optimize_for: Some(OptimizationTarget::Cost),
             max_tokens: Some(50),
             user_id: None,
@@ -83,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
             custom_weights: None,
         }),
         session_id: None,
+        default_model: None,
+        timeout: None,
+        tradeoff: None,
     };
 
     match selector.select_model(simple_request).await {
@@ -110,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
             "claude-3".to_string(),
             "llama-3.1".to_string(),
         ],
-        preferences: Some(UserPreferences {
+        preferences: Some(ModelUserPreferences {
             optimize_for: Some(OptimizationTarget::Balanced),
             max_tokens: Some(800),
             user_id: None,
@@ -118,6 +123,9 @@ async fn main() -> anyhow::Result<()> {
             custom_weights: None,
         }),
         session_id: None,
+        default_model: None,
+        timeout: None,
+        tradeoff: None,
     };
 
     match selector.select_model(creative_request).await {
