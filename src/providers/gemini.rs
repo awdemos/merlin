@@ -15,7 +15,7 @@ pub struct GeminiProvider {
 impl GeminiProvider {
     pub fn new(api_key: String, model: String) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::providers::default_http_client(),
             api_key,
             model,
             capabilities: None,

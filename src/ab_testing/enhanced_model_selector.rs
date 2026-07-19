@@ -21,8 +21,15 @@ pub struct EnhancedModelSelector {
     model_history: HashMap<String, ModelPerformanceHistory>,
     embedding_manager: EmbeddingManager,
     feature_dim: usize,
+    /// Stable mapping from model name to contextual bandit arm index.
+    arm_index_for_model: HashMap<String, usize>,
     experiment_runner: std::sync::Arc<tokio::sync::Mutex<ExperimentRunner>>,
 }
+
+/// Dimension of PromptFeatures::to_vector() (9 domain + 6 task + 4 numeric).
+const FEATURE_VECTOR_DIM: usize = 19;
+/// Dimension of the prompt embedding produced by EmbeddingManager.
+const EMBEDDING_DIM: usize = 256;
 
 #[derive(Debug, Clone)]
 struct ModelCapabilities {
@@ -41,6 +48,8 @@ struct ModelCapabilities {
 struct ModelPerformanceHistory {
     pub total_requests: u32,
     pub successful_requests: u32,
+    /// Number of requests that included a user rating (avg_rating denominator).
+    pub rated_requests: u32,
     pub avg_rating: f32,
     pub avg_latency: f32,
     pub total_cost: f64,
@@ -49,7 +58,7 @@ struct ModelPerformanceHistory {
 impl EnhancedModelSelector {
     pub async fn new(experiment_runner: std::sync::Arc<tokio::sync::Mutex<ExperimentRunner>>) -> anyhow::Result<Self> {
         let metrics = MetricCollector::connect().await?;
-        let embedding_manager = EmbeddingManager::new(256);
+        let embedding_manager = EmbeddingManager::new(EMBEDDING_DIM);
 
         // Initialize with common model capabilities
         let mut model_capabilities = HashMap::new();
@@ -93,13 +102,25 @@ impl EnhancedModelSelector {
             code_score: 0.88,
         });
 
+        // Context features fed to the bandit are to_vector() (19) + embedding (256).
+        // A mismatch makes ContextualArm::predict/update silently no-op.
+        let feature_dim = FEATURE_VECTOR_DIM + EMBEDDING_DIM;
+
+        // Stable arm index per model (sorted names => deterministic mapping)
+        let arm_index_for_model: HashMap<String, usize> = {
+            let mut names: Vec<&String> = model_capabilities.keys().collect();
+            names.sort();
+            names.into_iter().enumerate().map(|(i, name)| (name.clone(), i)).collect()
+        };
+
         Ok(Self {
+            routing_policy: RoutingPolicy::new_contextual(model_capabilities.len(), feature_dim, 0.01, 0.1),
             model_capabilities,
-            routing_policy: RoutingPolicy::new_contextual(3, 256, 0.01, 0.1),
             metrics,
             model_history: HashMap::new(),
             embedding_manager,
-            feature_dim: 256,
+            feature_dim,
+            arm_index_for_model,
             experiment_runner,
         })
     }
@@ -233,9 +254,15 @@ impl EnhancedModelSelector {
         let mut context_features = features.to_vector();
         context_features.extend_from_slice(&prompt_embedding);
 
+        // Map each candidate to its stable bandit arm; unknown models use a
+        // sentinel arm id so they get a neutral (default arm) score.
+        let candidate_arms: Vec<usize> = available_models.iter()
+            .map(|m| self.arm_index_for_model.get(m).copied().unwrap_or(usize::MAX))
+            .collect();
+
         // Use contextual bandit to select model
-        let selected_index = self.routing_policy.select_index_with_context(
-            available_models.len(),
+        let selected_index = self.routing_policy.select_candidate_with_context(
+            &candidate_arms,
             &context_features
         );
 
@@ -253,13 +280,15 @@ impl EnhancedModelSelector {
         cost: f64,
         error_message: Option<String>,
     ) -> anyhow::Result<()> {
-        // Record in standard metrics
-        self.metrics.record_success(model_name, 0); // Placeholder for actual token count
+        // Record in standard metrics (must be awaited, otherwise the future
+        // is dropped and nothing is written to Redis)
+        self.metrics.record_success(model_name, 0).await; // Placeholder for actual token count
 
-        // Update routing policy with reward
-        let reward = if success { 1.0 } else { 0.0 };
-        let model_index = self.model_capabilities.keys().position(|name| name == model_name).unwrap_or(0);
-        self.routing_policy.update_reward(model_index, success);
+        // Update routing policy with reward, using the stable arm index for
+        // this model (HashMap key order is random and must not be used).
+        if let Some(&arm_index) = self.arm_index_for_model.get(model_name) {
+            self.routing_policy.update_reward(arm_index, success);
+        }
 
         // Record in A/B testing if participating
         if experiment_context.experiment_id != "no-experiment" {
@@ -273,7 +302,8 @@ impl EnhancedModelSelector {
             };
 
             let mut runner = self.experiment_runner.lock().await;
-            runner.record_interaction(&experiment_context.experiment_id, user_id, &interaction_metrics);
+            // Best effort: if the assignment is gone there is nothing to record to
+            let _ = runner.record_interaction(&experiment_context.experiment_id, user_id, &interaction_metrics);
         }
 
         // Update model performance history
@@ -285,12 +315,16 @@ impl EnhancedModelSelector {
             history.avg_latency = (history.avg_latency * (history.total_requests - 1) as f32 + response_time_ms as f32) / history.total_requests as f32;
             history.total_cost += cost;
             if let Some(rating) = user_rating {
-                history.avg_rating = (history.avg_rating * (history.total_requests - 1) as f32 + rating as f32) / history.total_requests as f32;
+                // Average over rated requests only; dividing by total_requests
+                // would dilute the average with unrated requests.
+                history.avg_rating = (history.avg_rating * history.rated_requests as f32 + rating as f32) / (history.rated_requests + 1) as f32;
+                history.rated_requests += 1;
             }
         } else {
             self.model_history.insert(model_name.to_string(), ModelPerformanceHistory {
                 total_requests: 1,
                 successful_requests: if success { 1 } else { 0 },
+                rated_requests: if user_rating.is_some() { 1 } else { 0 },
                 avg_rating: user_rating.map(|r| r as f32).unwrap_or(0.0),
                 avg_latency: response_time_ms as f32,
                 total_cost: cost,
@@ -401,16 +435,17 @@ impl EnhancedModelSelector {
     ) -> Vec<ModelAlternative> {
         available_models.iter()
             .filter(|model| model != &selected_model)
-            .map(|model| {
-                let capabilities = self.model_capabilities.get(model).unwrap();
+            .filter_map(|model| {
+                // Skip models with unknown capabilities instead of panicking
+                let capabilities = self.model_capabilities.get(model)?;
                 let confidence = self.calculate_contextual_confidence(context_features, model);
 
-                ModelAlternative {
+                Some(ModelAlternative {
                     model: model.clone(),
                     confidence,
                     estimated_cost: None, // Would calculate based on actual token usage
                     estimated_latency_ms: Some(capabilities.avg_latency_ms),
-                }
+                })
             })
             .collect()
     }

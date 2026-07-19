@@ -61,7 +61,7 @@ impl CapabilityLoader {
     }
     
     pub async fn load_from_url(&mut self, url: &str) -> Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::providers::default_http_client();
         let response = client.get(url)
             .send()
             .await

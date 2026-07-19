@@ -43,13 +43,15 @@ impl FeedbackProcessor {
     ) -> anyhow::Result<u32> {
         let mut updates_count = 0;
         
-        // Get feedback for all models and update routing policy
+        // Get feedback for all models and update routing policy.
+        // Only feedback newer than the per-model watermark is applied, so
+        // repeated calls never double-count the same historical rewards.
         for (model_name, &provider_index) in model_index_map {
-            let recent_feedback = self.storage
-                .get_recent_feedback_for_model(model_name, 50)
+            let unapplied_feedback = self.storage
+                .get_unapplied_feedback_for_model(model_name, 50)
                 .await?;
             
-            for feedback in recent_feedback {
+            for feedback in unapplied_feedback {
                 let reward_score = self.feedback_to_reward_score(&feedback);
                 routing_policy.update_reward_with_score(provider_index, reward_score);
                 updates_count += 1;

@@ -129,6 +129,38 @@ pub async fn list_models(
     }))
 }
 
+/// Builds a [`ProviderConfig`] for the given provider with the correct
+/// default base URL and API key environment variable. Previously every
+/// provider was pointed at OpenAI's endpoint with `OPENAI_API_KEY`, which
+/// guaranteed failures (or sent prompts to the wrong vendor).
+fn default_provider_config(provider_name: &str, model: &str) -> crate::providers::ProviderConfig {
+    let (base_url, api_key_env) = match provider_name {
+        "anthropic" => ("https://api.anthropic.com", "ANTHROPIC_API_KEY"),
+        "mistral" => ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+        "gemini" => ("https://generativelanguage.googleapis.com", "GEMINI_API_KEY"),
+        "grok" => ("https://api.x.ai/v1", "GROK_API_KEY"),
+        "groq" => ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+        "zai" => ("https://api.z.ai/v1", "ZAI_API_KEY"),
+        "moonshot" => ("https://api.moonshot.cn", "MOONSHOT_API_KEY"),
+        "lambdalabs" => ("https://api.lambdalabs.com", "LAMBDA_API_KEY"),
+        "ollama" => ("http://localhost:11434", ""),
+        _ => ("https://api.openai.com/v1", "OPENAI_API_KEY"),
+    };
+
+    crate::providers::ProviderConfig {
+        enabled: true,
+        api_key: if api_key_env.is_empty() {
+            None
+        } else {
+            std::env::var(api_key_env).ok()
+        },
+        base_url: base_url.to_string(),
+        models: vec![model.to_string()],
+        default_model: model.to_string(),
+        custom_params: HashMap::new(),
+    }
+}
+
 pub async fn chat_completions(
     State(app_state): State<AppState>,
     Json(request): Json<OpenAIChatRequest>,
@@ -156,14 +188,7 @@ pub async fn chat_completions(
     drop(capability_loader);
 
     // Create provider instance (simplified - in production, cache these)
-    let provider_config = crate::providers::ProviderConfig {
-        enabled: true,
-        api_key: std::env::var("OPENAI_API_KEY").ok(),
-        base_url: "https://api.openai.com/v1".to_string(),
-        models: vec![request.model.clone()],
-        default_model: request.model.clone(),
-        custom_params: HashMap::new(),
-    };
+    let provider_config = default_provider_config(&provider_name, &request.model);
 
     let provider = app_state.provider_registry
         .create_provider(&provider_name, &provider_config)

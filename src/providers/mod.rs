@@ -26,6 +26,18 @@ pub use capabilities::{ModelCapabilities, CapabilityLoader, QualityScores};
 
 use async_trait::async_trait;
 
+/// Default timeout for provider HTTP requests. Without a timeout, a hung
+/// upstream would block routing/chat requests indefinitely.
+const PROVIDER_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Builds an HTTP client for providers with a sane default request timeout.
+pub(crate) fn default_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(PROVIDER_REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
 /// Trait for LLM provider implementations.
 ///
 /// All LLM providers must implement this trait to be used with the Merlin router.

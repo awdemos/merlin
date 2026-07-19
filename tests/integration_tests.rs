@@ -16,7 +16,7 @@ async fn test_ollama_provider() {
 
 #[tokio::test]
 async fn test_routing_policy_selection() {
-    let epsilon_policy = RoutingPolicy::EpsilonGreedy { epsilon: 0.1 };
+    let epsilon_policy = RoutingPolicy::new_epsilon_greedy(3, 0.1);
 
     // Test that it selects valid indices
     for _ in 0..100 {

@@ -51,6 +51,7 @@ pub use feedback::FeedbackProcessor;
 pub use metrics::MetricCollector;
 pub use model_selector::IntelligentModelSelector;
 pub use providers::LlmProvider;
+pub use providers::MerlinConfig;
 pub use providers::OllamaProvider;
 pub use providers::OpenAiProvider;
 pub use routing::RoutingPolicy;
@@ -72,16 +73,21 @@ pub struct Router<P: LlmProvider> {
 impl<P: LlmProvider> Router<P> {
     /// Creates a new router with the given providers and routing policy.
     ///
-    /// Connects to Redis for metrics storage. Panics if Redis connection fails.
+    /// Connects to Redis for metrics storage. If Redis is unavailable, metrics
+    /// recording is disabled (degraded no-op) instead of panicking.
     ///
     /// # Arguments
     ///
     /// * `providers` - Vector of LLM provider instances
     /// * `policy` - Routing policy for provider selection
     pub async fn new(providers: Vec<P>, policy: RoutingPolicy) -> Self {
-        let metrics = MetricCollector::connect()
-            .await
-            .expect("Redis connection failed");
+        let metrics = match MetricCollector::connect().await {
+            Ok(collector) => collector,
+            Err(e) => {
+                tracing::warn!("Redis unavailable, routing metrics disabled: {}", e);
+                MetricCollector::new_fallback()
+            }
+        };
         Router {
             providers,
             policy,
@@ -110,9 +116,9 @@ impl<P: LlmProvider> Router<P> {
         
         match result {
             Ok(response) => {
-                // Record success metrics
+                // Record success metrics (rough token estimate: ~4 chars/token)
                 self.metrics
-                    .record_success(selected_provider.name(), response.len())
+                    .record_success(selected_provider.name(), response.len() / 4)
                     .await;
                 
                 // Update routing policy with positive reward
@@ -156,9 +162,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_routing_policy_epsilon_greedy() {
-        let policy = RoutingPolicy::EpsilonGreedy { epsilon: 0.5 };
+        let policy = RoutingPolicy::new_epsilon_greedy(3, 0.5);
         let index = policy.select_index(3);
         assert!(index < 3);
+    }
+
+    #[tokio::test]
+    async fn test_epsilon_greedy_exploits_best_arm() {
+        // epsilon = 0.0 => always exploit
+        let mut policy = RoutingPolicy::new_epsilon_greedy(3, 0.0);
+
+        policy.update_reward(0, false);
+        policy.update_reward(1, false);
+        policy.update_reward(2, true);
+        policy.update_reward(2, true);
+
+        // Arm 2 has the best average reward and must be exploited
+        assert_eq!(policy.select_index(3), 2);
+    }
+
+    #[tokio::test]
+    async fn test_epsilon_greedy_optimistic_initialization() {
+        // With no rewards recorded, all arms average to INFINITY and the
+        // first arm is picked deterministically (no panic, no randomness).
+        let policy = RoutingPolicy::new_epsilon_greedy(3, 0.0);
+        assert_eq!(policy.select_index(3), 0);
+    }
+
+    #[tokio::test]
+    async fn test_static_policy_selection() {
+        let policy = RoutingPolicy::Static { provider_index: 2 };
+        assert_eq!(policy.select_index(3), 2);
+
+        // Out-of-range index clamps to the last provider instead of panicking
+        let policy = RoutingPolicy::Static { provider_index: 10 };
+        assert_eq!(policy.select_index(3), 2);
     }
 
     #[tokio::test]
