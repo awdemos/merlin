@@ -146,7 +146,8 @@ impl Experiment {
 
         match config {
             EpsilonGreedy { epsilon } => {
-                Ok(RoutingPolicy::EpsilonGreedy { epsilon: *epsilon })
+                // Arms are populated lazily on reward updates
+                Ok(RoutingPolicy::new_epsilon_greedy(0, *epsilon))
             },
             ThompsonSampling { arms_count } => {
                 let mut arms = HashMap::new();
@@ -180,9 +181,8 @@ impl Experiment {
                     exploration_rate: 0.1, // Default
                 })
             },
-            Static { provider_index: _ } => {
-                // For static routing, we'll use a simple epsilon-greedy with very low epsilon
-                Ok(RoutingPolicy::EpsilonGreedy { epsilon: 0.01 })
+            Static { provider_index } => {
+                Ok(RoutingPolicy::Static { provider_index: *provider_index })
             }
         }
     }
@@ -267,8 +267,14 @@ impl Experiment {
                             .map(|r| &r.metrics);
 
                         if let (Some(control), Some(winner)) = (control_metrics, winner_metrics) {
-                            let actual_improvement = (winner.average_success_rate() - control.average_success_rate())
-                                / control.average_success_rate();
+                            // Guard against division by zero when the control
+                            // success rate is 0 (would yield inf/NaN).
+                            let control_rate = control.average_success_rate();
+                            let actual_improvement = if control_rate > 0.0 {
+                                (winner.average_success_rate() - control_rate) / control_rate
+                            } else {
+                                0.0
+                            };
 
                             if actual_improvement >= improvement {
                                 return ExperimentRecommendation::Deploy { variant_id: winner_id };
@@ -398,15 +404,28 @@ impl ExperimentRunner {
             .and_then(|exp| exp.assign_user(user_id))
     }
 
+    /// Returns the variant a user is assigned to, without creating an assignment.
+    pub fn assigned_variant(&self, experiment_id: &str, user_id: &str) -> Option<String> {
+        self.experiments
+            .get(experiment_id)
+            .and_then(|exp| exp.user_assignments.get(user_id).cloned())
+    }
+
     /// Records an interaction for a user in an experiment.
-    pub fn record_interaction(&mut self, experiment_id: &str, user_id: &str, metrics: &InteractionMetrics) {
+    ///
+    /// Returns `true` if the interaction was actually recorded, `false` if
+    /// the user was never assigned to a variant (or the experiment doesn't
+    /// exist) — callers should surface that instead of reporting success.
+    pub fn record_interaction(&mut self, experiment_id: &str, user_id: &str, metrics: &InteractionMetrics) -> bool {
         if let Some(variant_id) = self.experiments
             .get_mut(experiment_id)
             .and_then(|exp| exp.user_assignments.get(user_id).cloned()) {
             if let Some(experiment) = self.experiments.get_mut(experiment_id) {
                 experiment.record_interaction(user_id, &variant_id, metrics);
+                return true;
             }
         }
+        false
     }
 
     /// Saves results for all experiments to storage.

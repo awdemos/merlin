@@ -16,7 +16,7 @@ pub struct ZAIProvider {
 impl ZAIProvider {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::providers::default_http_client(),
             api_key,
             model,
             base_url,

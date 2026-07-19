@@ -123,10 +123,19 @@ impl PromptFeatures {
             }
         }
 
-        scores.into_iter()
-            .max_by_key(|(_, score)| *score)
-            .map(|(category, _)| category)
-            .unwrap_or(DomainCategory::General)
+        // Iterate a fixed-order array so ties break deterministically.
+        // max_by_key returns the LAST maximum, so ties resolve to General
+        // (the safe default) instead of depending on random HashMap order.
+        [
+            DomainCategory::Technical,
+            DomainCategory::Creative,
+            DomainCategory::Analytical,
+            DomainCategory::General,
+        ]
+        .iter()
+        .max_by_key(|category| scores.get(*category).copied().unwrap_or(0))
+        .cloned()
+        .unwrap_or(DomainCategory::General)
     }
 
     fn classify_task(text: &str) -> TaskType {
@@ -156,10 +165,19 @@ impl PromptFeatures {
             }
         }
 
-        scores.into_iter()
-            .max_by_key(|(_, score)| *score)
-            .map(|(task_type, _)| task_type)
-            .unwrap_or(TaskType::Question)
+        // Iterate a fixed-order array so ties break deterministically.
+        // max_by_key returns the LAST maximum, so ties resolve to Question
+        // (the default) instead of depending on random HashMap order.
+        [
+            TaskType::Generation,
+            TaskType::Analysis,
+            TaskType::Instruction,
+            TaskType::Question,
+        ]
+        .iter()
+        .max_by_key(|task_type| scores.get(*task_type).copied().unwrap_or(0))
+        .cloned()
+        .unwrap_or(TaskType::Question)
     }
 
     fn calculate_complexity(text: &str) -> f64 {

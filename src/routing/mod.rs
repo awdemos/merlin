@@ -37,6 +37,13 @@ pub enum RoutingPolicy {
     EpsilonGreedy {
         /// Probability of random exploration (0.0 to 1.0).
         epsilon: f64,
+        /// Per-provider reward statistics used to pick the best arm when exploiting.
+        arms: HashMap<usize, EpsilonGreedyArm>,
+    },
+    /// Static policy: always selects the same provider.
+    Static {
+        /// Provider index to always select.
+        provider_index: usize,
     },
     /// Thompson sampling using Beta distributions for each provider.
     ThompsonSampling {
@@ -72,6 +79,41 @@ pub struct ThompsonArm {
     pub alpha: f64,
     /// Beta parameter (failures + 1 for uniform prior).
     pub beta: f64,
+}
+
+/// Epsilon-greedy arm with running reward statistics.
+#[derive(Clone, Debug)]
+pub struct EpsilonGreedyArm {
+    /// Cumulative reward received.
+    pub total_reward: f64,
+    /// Number of times this arm has been pulled.
+    pub num_pulls: u32,
+}
+
+impl EpsilonGreedyArm {
+    /// Creates a new arm with zero initial statistics.
+    pub fn new() -> Self {
+        EpsilonGreedyArm {
+            total_reward: 0.0,
+            num_pulls: 0,
+        }
+    }
+
+    /// Average reward; arms that have never been pulled return `INFINITY`
+    /// (optimistic initialization) so exploitation tries every arm at least once.
+    pub fn average_reward(&self) -> f64 {
+        if self.num_pulls == 0 {
+            f64::INFINITY
+        } else {
+            self.total_reward / self.num_pulls as f64
+        }
+    }
+
+    /// Records a reward observation.
+    pub fn update(&mut self, reward: f64) {
+        self.num_pulls += 1;
+        self.total_reward += reward;
+    }
 }
 
 /// Upper Confidence Bound arm with running statistics.
@@ -157,8 +199,9 @@ impl UCBArm {
             return f64::INFINITY;
         }
 
-        let exploration_bonus =
-            confidence_level * ((total_rounds as f64).ln() / self.num_pulls as f64).sqrt();
+        // max(1) guards against ln(0) = -inf if total_rounds was not incremented
+        let exploration_bonus = confidence_level
+            * ((total_rounds.max(1) as f64).ln() / self.num_pulls as f64).sqrt();
 
         self.average_reward + exploration_bonus
     }
@@ -225,6 +268,15 @@ impl ContextualArm {
 }
 
 impl RoutingPolicy {
+    /// Creates a new epsilon-greedy policy with the given exploration probability.
+    pub fn new_epsilon_greedy(num_providers: usize, epsilon: f64) -> Self {
+        let mut arms = HashMap::new();
+        for i in 0..num_providers {
+            arms.insert(i, EpsilonGreedyArm::new());
+        }
+        RoutingPolicy::EpsilonGreedy { epsilon, arms }
+    }
+
     /// Creates a new Thompson Sampling policy with the specified number of providers.
     pub fn new_thompson_sampling(num_providers: usize) -> Self {
         let mut arms = HashMap::new();
@@ -277,13 +329,36 @@ impl RoutingPolicy {
         num_providers: usize,
         context_features: &[f64],
     ) -> usize {
+        if num_providers == 0 {
+            return 0;
+        }
         match self {
-            RoutingPolicy::EpsilonGreedy { epsilon } => {
-                if rand::thread_rng().gen_bool(*epsilon) {
+            RoutingPolicy::EpsilonGreedy { epsilon, arms } => {
+                // Clamp to [0, 1]: out-of-range values would panic gen_bool
+                let epsilon = epsilon.clamp(0.0, 1.0);
+                if rand::thread_rng().gen_bool(epsilon) {
                     rand::thread_rng().gen_range(0..num_providers)
                 } else {
-                    0 // Default to first provider for now
+                    // Exploit: pick the arm with the best average reward.
+                    // Unpulled arms average to INFINITY (optimistic init),
+                    // so every arm gets tried at least once.
+                    let mut best_index = 0;
+                    let mut best_average = f64::NEG_INFINITY;
+                    let default_arm = EpsilonGreedyArm::new();
+                    for i in 0..num_providers {
+                        let arm = arms.get(&i).unwrap_or(&default_arm);
+                        let average = arm.average_reward();
+                        if average > best_average {
+                            best_average = average;
+                            best_index = i;
+                        }
+                    }
+                    best_index
                 }
+            }
+            RoutingPolicy::Static { provider_index } => {
+                // Clamp into range so a stale index can't panic the caller
+                (*provider_index).min(num_providers.saturating_sub(1))
             }
             RoutingPolicy::ThompsonSampling { arms } => {
                 let mut best_index = 0;
@@ -328,8 +403,11 @@ impl RoutingPolicy {
                 let mut best_score = f64::NEG_INFINITY;
                 let default_arm = ContextualArm::new(context_features.len());
 
+                // Clamp to [0, 1]: out-of-range values would panic gen_bool
+                let exploration_rate = exploration_rate.clamp(0.0, 1.0);
+
                 // Explore or exploit
-                if rand::thread_rng().gen_bool(*exploration_rate) {
+                if rand::thread_rng().gen_bool(exploration_rate) {
                     // Exploration: random selection
                     best_index = rand::thread_rng().gen_range(0..num_providers);
                 } else {
@@ -345,6 +423,59 @@ impl RoutingPolicy {
                 }
                 best_index
             }
+        }
+    }
+
+    /// Selects among explicit candidate arm indices using context features.
+    ///
+    /// Returns the position *within `candidates`* of the chosen arm (so the
+    /// caller can index into its own candidate list). Unlike
+    /// [`select_index_with_context`](Self::select_index_with_context), which
+    /// assumes arms are numbered `0..num_providers`, this lets callers keep a
+    /// stable model-to-arm mapping when the candidate set varies per request.
+    ///
+    /// Returns 0 for an empty candidate list.
+    pub fn select_candidate_with_context(
+        &self,
+        candidates: &[usize],
+        context_features: &[f64],
+    ) -> usize {
+        if candidates.is_empty() {
+            return 0;
+        }
+        match self {
+            RoutingPolicy::Static { provider_index } => {
+                // Position of the static arm within the candidate list
+                candidates
+                    .iter()
+                    .position(|&arm| arm == *provider_index)
+                    .unwrap_or(0)
+            }
+            RoutingPolicy::Contextual {
+                arms,
+                exploration_rate,
+                ..
+            } => {
+                let exploration_rate = exploration_rate.clamp(0.0, 1.0);
+                if rand::thread_rng().gen_bool(exploration_rate) {
+                    rand::thread_rng().gen_range(0..candidates.len())
+                } else {
+                    let default_arm = ContextualArm::new(context_features.len());
+                    let mut best_pos = 0;
+                    let mut best_score = f64::NEG_INFINITY;
+                    for (pos, &arm_id) in candidates.iter().enumerate() {
+                        let arm = arms.get(&arm_id).unwrap_or(&default_arm);
+                        let score = arm.predict(context_features);
+                        if score > best_score {
+                            best_score = score;
+                            best_pos = pos;
+                        }
+                    }
+                    best_pos
+                }
+            }
+            // Non-contextual policies treat the candidate position as the index.
+            _ => self.select_index_with_context(candidates.len(), context_features),
         }
     }
 
@@ -369,12 +500,18 @@ impl RoutingPolicy {
                     arm.update_reward(reward);
                 }
             }
-            RoutingPolicy::EpsilonGreedy { .. } => {
-                // EpsilonGreedy doesn't learn from rewards in this simple implementation
+            RoutingPolicy::EpsilonGreedy { arms, .. } => {
+                let reward = if success { 1.0 } else { 0.0 };
+                arms.entry(provider_index)
+                    .or_insert_with(EpsilonGreedyArm::new)
+                    .update(reward);
             }
             RoutingPolicy::Contextual { .. } => {
                 // Contextual bandit requires context features for updates
                 // Use update_reward_with_context instead
+            }
+            RoutingPolicy::Static { .. } => {
+                // Static policy does not learn
             }
         }
     }
@@ -399,12 +536,17 @@ impl RoutingPolicy {
                     arm.update_reward(reward_score);
                 }
             }
-            RoutingPolicy::EpsilonGreedy { .. } => {
-                // EpsilonGreedy doesn't learn from rewards in this simple implementation
+            RoutingPolicy::EpsilonGreedy { arms, .. } => {
+                arms.entry(provider_index)
+                    .or_insert_with(EpsilonGreedyArm::new)
+                    .update(reward_score);
             }
             RoutingPolicy::Contextual { .. } => {
                 // Contextual bandit requires context features for updates
                 // Use update_reward_with_context instead
+            }
+            RoutingPolicy::Static { .. } => {
+                // Static policy does not learn
             }
         }
     }

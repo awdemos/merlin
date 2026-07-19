@@ -41,6 +41,43 @@ impl PreferenceManager {
         })
     }
 
+    /// Attempts to get a Redis connection, returning `None` (with a warning)
+    /// when Redis is unreachable so callers can degrade to cache-only operation.
+    async fn try_redis_connection(&self) -> Option<redis::aio::MultiplexedConnection> {
+        let client = self.redis_client.as_ref()?;
+        match client.get_multiplexed_async_connection().await {
+            Ok(conn) => Some(conn),
+            Err(e) => {
+                eprintln!("Warning: Redis unavailable for preferences, using cache only: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Persists preferences to Redis (best effort) and always updates the cache.
+    async fn save_preferences(&self, user_id: &str, preferences: &UserPreferences) -> anyhow::Result<()> {
+        // Save to Redis if available (best effort: cache remains the fallback)
+        if let Some(mut conn) = self.try_redis_connection().await {
+            let key = format!("user_preferences:{}", user_id);
+            let prefs_json = serde_json::to_string(preferences)?;
+
+            if let Err(e) = conn.set::<_, _, ()>(&key, prefs_json).await {
+                eprintln!("Warning: failed to persist preferences to Redis: {}", e);
+            } else {
+                // Set expiration (30 days)
+                let _ = conn.expire::<_, ()>(key, 60 * 60 * 24 * 30).await;
+            }
+        }
+
+        // Update cache
+        {
+            let mut cache = self.preferences_cache.lock().await;
+            cache.insert(user_id.to_string(), preferences.clone());
+        }
+
+        Ok(())
+    }
+
     pub async fn get_preferences(&self, user_id: &str) -> anyhow::Result<UserPreferences> {
         // Check cache first
         {
@@ -51,8 +88,7 @@ impl PreferenceManager {
         }
 
         // Try Redis if available
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client.get_async_connection().await?;
+        if let Some(mut conn) = self.try_redis_connection().await {
             let key = format!("user_preferences:{}", user_id);
 
             if let Ok(prefs_json) = conn.get::<_, String>(key).await {
@@ -89,24 +125,8 @@ impl PreferenceManager {
         // Update preferences
         preferences.update_from_request(request.clone());
 
-        // Save to Redis if available
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client.get_async_connection().await?;
-            let key = format!("user_preferences:{}", user_id);
-            let prefs_json = serde_json::to_string(&preferences)?;
-
-            conn.set::<_, _, ()>(key, prefs_json).await?;
-
-            // Set expiration (30 days)
-            let expire_key = format!("user_preferences:{}", user_id);
-            conn.expire::<_, ()>(expire_key, 60 * 60 * 24 * 30).await?;
-        }
-
-        // Update cache
-        {
-            let mut cache = self.preferences_cache.lock().await;
-            cache.insert(user_id.to_string(), preferences.clone());
-        }
+        // Save updated preferences
+        self.save_preferences(user_id, &preferences).await?;
 
         Ok(PreferenceResponse {
             success: true,
@@ -127,19 +147,11 @@ impl PreferenceManager {
             self.learn_from_interaction(&mut preferences, &interaction).await?;
         }
 
-        // Save updated preferences
-        let update_request = PreferenceUpdateRequest {
-            user_id: user_id.to_string(),
-            optimize_for: None,
-            max_tokens: None,
-            temperature: None,
-            custom_weights: None,
-            preferred_models: None,
-            excluded_models: None,
-            learning_enabled: None,
-        };
-
-        self.update_preferences(update_request).await?;
+        // Save the mutated preferences directly. (Previously this went through
+        // `update_preferences` with an all-`None` request, which re-loaded the
+        // pre-mutation copy from the cache and persisted that instead,
+        // silently discarding the interaction and the learned weights.)
+        self.save_preferences(user_id, &preferences).await?;
 
         // Also record in feedback processor for broader learning
         if let Some(rating) = interaction.rating {
@@ -328,8 +340,7 @@ impl PreferenceManager {
         }
 
         // Remove from Redis
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client.get_async_connection().await?;
+        if let Some(mut conn) = self.try_redis_connection().await {
             let key = format!("user_preferences:{}", user_id);
 
             match conn.del::<_, i32>(key).await {
@@ -345,9 +356,7 @@ impl PreferenceManager {
     }
 
     pub async fn get_all_users(&self) -> anyhow::Result<Vec<String>> {
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client.get_async_connection().await?;
-
+        if let Some(mut conn) = self.try_redis_connection().await {
             // Get all keys matching user_preferences pattern
             let keys: Vec<String> = conn.keys("user_preferences:*").await?;
 

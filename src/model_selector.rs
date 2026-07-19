@@ -20,6 +20,10 @@ pub struct IntelligentModelSelector {
     model_history: HashMap<String, ModelPerformanceHistory>,
     embedding_manager: EmbeddingManager,
     feature_dim: usize,
+    /// Stable mapping from model name to contextual bandit arm index, so that
+    /// rewards and predictions stay attached to the same model across requests
+    /// with varying candidate lists.
+    arm_index_for_model: HashMap<String, usize>,
 }
 
 // Convert from providers::ModelCapabilities to internal format for compatibility
@@ -84,11 +88,16 @@ impl IntelligentModelSelector {
         }
         drop(loader);
 
-        // Calculate feature dimension based on our feature vector
+        // Calculate feature dimension to match exactly what `select_model`
+        // feeds the bandit: PromptFeatures::to_feature_vector() (4 domain +
+        // 4 task + 4 continuous + 24 keyword = 36) plus the prompt embedding.
+        // A mismatch makes ContextualArm::predict/update silently no-op.
+        let embedding_dim = 64;
         let feature_dim = 4 + // Domain categories (one-hot)
                         4 + // Task types (one-hot)
-                        2 + // Complexity and normalized tokens
-                        24; // Keyword features
+                        4 + // Complexity, normalized tokens, length, structural
+                        24 + // Keyword features
+                        embedding_dim; // Prompt embedding
         
         // Initialize Contextual Bandit with available models
         let routing_policy = RoutingPolicy::new_contextual(
@@ -98,8 +107,15 @@ impl IntelligentModelSelector {
             0.2, // exploration rate
         );
 
+        // Stable arm index per model (sorted names => deterministic mapping)
+        let arm_index_for_model: HashMap<String, usize> = {
+            let mut names: Vec<&String> = model_capabilities.keys().collect();
+            names.sort();
+            names.into_iter().enumerate().map(|(i, name)| (name.clone(), i)).collect()
+        };
+
         // Initialize embedding manager
-        let embedding_manager = EmbeddingManager::new(64); // 64-dimensional embeddings
+        let embedding_manager = EmbeddingManager::new(embedding_dim);
         
         Ok(IntelligentModelSelector {
             capability_loader,
@@ -109,6 +125,7 @@ impl IntelligentModelSelector {
             model_history: HashMap::new(),
             embedding_manager,
             feature_dim,
+            arm_index_for_model,
         })
     }
     
@@ -150,13 +167,23 @@ impl IntelligentModelSelector {
             filtered_models
         };
 
-        // Use contextual bandit to select model from filtered list
-        let model_names: Vec<&String> = final_models.iter().collect();
-        let provider_indices: Vec<usize> = (0..final_models.len()).collect();
+        // Reject empty candidate lists up front instead of panicking in the
+        // bandit (gen_range(0..0)) or indexing an empty Vec.
+        if final_models.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No models available for selection: request.models is empty and no default_model was provided"
+            ));
+        }
+
+        // Map each candidate to its stable bandit arm; unknown models use a
+        // sentinel arm id so they get a neutral (default arm) score.
+        let candidate_arms: Vec<usize> = final_models.iter()
+            .map(|m| self.arm_index_for_model.get(m).copied().unwrap_or(usize::MAX))
+            .collect();
 
         // Find the best model using contextual bandit
-        let selected_index = self.routing_policy.select_index_with_context(
-            model_names.len(),
+        let selected_index = self.routing_policy.select_candidate_with_context(
+            &candidate_arms,
             &context_features
         );
 
@@ -189,22 +216,22 @@ impl IntelligentModelSelector {
             &request.tradeoff,
         );
 
-        // Create alternatives list with contextual scores
-        let alternatives: Vec<ModelAlternative> = provider_indices.iter()
-            .filter(|&&i| i != selected_index)
-            .map(|&i| {
-                let model_name = &final_models[i];
-                let model_caps = self.model_capabilities.get(model_name).unwrap();
-                let alt_confidence = self.calculate_contextual_confidence(&context_features, i);
+        // Create alternatives list with contextual scores.
+        // Models without known capabilities are skipped instead of panicking.
+        let alternatives: Vec<ModelAlternative> = final_models.iter().enumerate()
+            .filter(|(i, _)| *i != selected_index)
+            .filter_map(|(_, model_name)| {
+                let model_caps = self.model_capabilities.get(model_name)?;
+                let alt_confidence = self.calculate_contextual_confidence(&context_features, 0);
 
-                ModelAlternative {
+                Some(ModelAlternative {
                     model: model_name.clone(),
                     confidence: alt_confidence,
                     estimated_cost: Some(
                         model_caps.cost_per_1k_tokens * (features.estimated_tokens as f64 / 1000.0)
                     ),
                     estimated_latency_ms: Some(model_caps.avg_latency_ms),
-                }
+                })
             })
             .collect();
 
@@ -315,7 +342,8 @@ impl IntelligentModelSelector {
     }
 
     fn find_faster_model(&self, models: &[String], timeout_seconds: u32, exclude_index: usize) -> anyhow::Result<Option<String>> {
-        let timeout_ms = timeout_seconds as u32 * 1000;
+        // u64 + saturating_mul: u32 seconds * 1000 can overflow u32
+        let timeout_ms = (timeout_seconds as u64).saturating_mul(1000);
         
         for (i, model_name) in models.iter().enumerate() {
             if i == exclude_index {
@@ -323,7 +351,7 @@ impl IntelligentModelSelector {
             }
             
             if let Some(capabilities) = self.model_capabilities.get(model_name) {
-                if capabilities.avg_latency_ms <= timeout_ms {
+                if capabilities.avg_latency_ms as u64 <= timeout_ms {
                     return Ok(Some(model_name.clone()));
                 }
             }

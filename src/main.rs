@@ -186,8 +186,7 @@ async fn main() -> anyhow::Result<()> {
                         .long("port")
                         .short('p')
                         .value_name("PORT")
-                        .help("Port to listen on")
-                        .default_value("7777"),
+                        .help("Port to listen on (overrides config file, default 7777)"),
                 )
                 .arg(
                     Arg::new("config")
@@ -247,10 +246,25 @@ async fn main() -> anyhow::Result<()> {
 
     match matches.subcommand() {
         Some(("serve", sub_matches)) => {
-            let port = sub_matches
-                .get_one::<String>("port")
-                .unwrap()
-                .parse::<u16>()?;
+            // Honor --config: create_server_with_state() reads MERLIN_CONFIG.
+            // Previously the flag was parsed but silently ignored.
+            let config_path = sub_matches
+                .get_one::<String>("config")
+                .cloned()
+                .or_else(|| std::env::var("MERLIN_CONFIG").ok());
+            if let Some(ref path) = config_path {
+                std::env::set_var("MERLIN_CONFIG", path);
+            }
+
+            // Port precedence: --port flag > config file server.port > 7777
+            let port = match sub_matches.get_one::<String>("port") {
+                Some(p) => p.parse::<u16>()?,
+                None => config_path
+                    .as_deref()
+                    .and_then(|path| merlin::MerlinConfig::load_from_file(path).ok())
+                    .map(|config| config.server.port)
+                    .unwrap_or(7777),
+            };
 
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
 

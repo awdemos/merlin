@@ -76,6 +76,9 @@ pub struct AppState {
     pub preference_server_state: Arc<crate::server::preferences::PreferenceServerState>,
     /// A/B testing experiment runner.
     pub experiment_runner: Arc<tokio::sync::Mutex<crate::ab_testing::experiment::ExperimentRunner>>,
+    /// Enhanced model selector with A/B testing support. Shared across
+    /// requests so contextual bandit learning persists.
+    pub enhanced_model_selector: Arc<tokio::sync::Mutex<crate::ab_testing::EnhancedModelSelector>>,
     pub provider_registry: Arc<ProviderRegistry>,
     pub capability_loader: Arc<tokio::sync::Mutex<CapabilityLoader>>,
 }
@@ -148,12 +151,21 @@ pub async fn create_server_with_state() -> anyhow::Result<Router> {
     let experiment_runner = Arc::new(
         tokio::sync::Mutex::new(crate::ab_testing::experiment::ExperimentRunner::new(experiment_storage))
     );
+
+    // Shared enhanced selector: creating one per request would reset the
+    // contextual bandit state (and open a new Redis connection) every time.
+    let enhanced_model_selector = Arc::new(
+        tokio::sync::Mutex::new(
+            crate::ab_testing::EnhancedModelSelector::new(experiment_runner.clone()).await?
+        )
+    );
     
     let app_state = AppState {
         model_selector,
         feedback_processor,
         preference_server_state,
         experiment_runner,
+        enhanced_model_selector,
         provider_registry: Arc::new(provider_registry),
         capability_loader: capability_loader_arc.clone(),
     };

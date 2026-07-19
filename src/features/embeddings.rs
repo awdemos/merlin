@@ -1,5 +1,9 @@
 use std::collections::HashMap;
 
+/// Maximum number of cached embeddings. The cache is keyed by full prompt
+/// text and lives for the whole process, so without a bound it grows forever.
+const MAX_CACHE_ENTRIES: usize = 10_000;
+
 #[derive(Debug, Clone)]
 pub struct EmbeddingManager {
     cache: HashMap<String, Vec<f64>>,
@@ -22,6 +26,13 @@ impl EmbeddingManager {
 
         // Generate simple embedding (placeholder for real embedding model)
         let embedding = self.generate_simple_embedding(text);
+
+        // Safety valve against unbounded growth: drop all entries when the
+        // cap is hit (simple full-reset eviction; embeddings are cheap to
+        // recompute).
+        if self.cache.len() >= MAX_CACHE_ENTRIES {
+            self.cache.clear();
+        }
 
         // Cache the result
         self.cache.insert(text.to_string(), embedding.clone());

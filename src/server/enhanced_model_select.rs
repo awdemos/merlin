@@ -70,18 +70,11 @@ async fn enhanced_model_select(
         manager.get_preferences(&request.user_id).await.ok()
     };
 
-    // Use enhanced model selector
-    let mut selector = crate::ab_testing::EnhancedModelSelector::new(app_state.experiment_runner.clone()).await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::server::ErrorResponse {
-                    error: format!("Failed to create enhanced model selector: {}", e),
-                }),
-            )
-        })?;
-
-    let (model_response, experiment_context) = selector
+    // Use the shared enhanced model selector so bandit learning persists
+    // across requests (constructing one per request reset all learned state).
+    let (model_response, experiment_context) = app_state.enhanced_model_selector
+        .lock()
+        .await
         .select_model_with_ab_testing(&standard_request, user_preferences.as_ref(), &request.user_id)
         .await
         .map_err(|e| {
@@ -106,7 +99,6 @@ async fn enhanced_model_select(
 
     // Store the selection for later feedback recording
     // In a real implementation, you'd store this in a database or cache
-    let feedback_storage = app_state.feedback_processor.lock().await;
     // Note: You might want to extend the feedback processor to handle enhanced selections
 
     Ok(Json(enhanced_response))
@@ -167,18 +159,10 @@ async fn record_enhanced_feedback(
     let cost = interaction.cost;
     let error_message = interaction.error_message.clone();
 
-    // Use enhanced model selector to record the interaction
-    let mut selector = crate::ab_testing::EnhancedModelSelector::new(app_state.experiment_runner.clone()).await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(crate::server::ErrorResponse {
-                    error: format!("Failed to create enhanced model selector: {}", e),
-                }),
-            )
-        })?;
-
-    selector
+    // Use the shared enhanced model selector to record the interaction
+    app_state.enhanced_model_selector
+        .lock()
+        .await
         .record_interaction(
             &user_id,
             &model,

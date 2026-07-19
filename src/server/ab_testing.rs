@@ -417,11 +417,39 @@ async fn record_metrics(
 
     // Clone needed fields before converting to metrics
     let user_id = request.user_id.clone();
+    let variant_id = request.variant_id.clone();
 
     // Convert request to interaction metrics
     let metrics: crate::ab_testing::experiment::InteractionMetrics = request.into();
 
     let mut runner = app_state.experiment_runner.lock().await;
+
+    // Verify the user is actually assigned to a variant, and that it matches
+    // the variant the client claims — previously metrics were silently
+    // dropped while the API reported success.
+    match runner.assigned_variant(&experiment_id, &user_id) {
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(crate::server::ErrorResponse {
+                    error: "User is not assigned to a variant in this experiment".to_string(),
+                }),
+            ));
+        }
+        Some(assigned) if assigned != variant_id => {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(crate::server::ErrorResponse {
+                    error: format!(
+                        "Variant mismatch: user is assigned to variant '{}', not '{}'",
+                        assigned, variant_id
+                    ),
+                }),
+            ));
+        }
+        Some(_) => {}
+    }
+
     runner.record_interaction(&experiment_id, &user_id, &metrics);
 
     // Save results to storage

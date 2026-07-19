@@ -21,7 +21,7 @@ impl OllamaProvider {
     /// * `model` - The model name to use for inference
     pub fn new(endpoint: String, model: String) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::providers::default_http_client(),
             endpoint,
             model,
         }

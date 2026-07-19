@@ -3,6 +3,20 @@ use crate::ab_testing::config::MetricType;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
+/// Maximum number of individual samples retained per variant. These vecs
+/// live in memory for the whole experiment, so without a bound they grow
+/// forever; older samples are dropped (rolling window). Aggregate counters
+/// (total_interactions, totals) remain exact.
+const MAX_RETAINED_SAMPLES: usize = 1000;
+
+/// Pushes a sample, evicting the oldest one when the retention cap is hit.
+fn push_bounded<T>(vec: &mut Vec<T>, value: T) {
+    if vec.len() >= MAX_RETAINED_SAMPLES {
+        vec.remove(0);
+    }
+    vec.push(value);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentMetrics {
     pub variant_id: String,
@@ -47,14 +61,14 @@ impl ExperimentMetrics {
         self.total_cost += metrics.cost;
 
         if let Some(rating) = metrics.user_rating {
-            self.user_ratings.push(rating);
+            push_bounded(&mut self.user_ratings, rating);
         }
 
         if let Some(error) = &metrics.error_message {
-            self.errors.push(error.clone());
+            push_bounded(&mut self.errors, error.clone());
         }
 
-        self.response_times.push(metrics.response_time_ms);
+        push_bounded(&mut self.response_times, metrics.response_time_ms);
 
         // Update derived metrics
         self.update_derived_metrics();

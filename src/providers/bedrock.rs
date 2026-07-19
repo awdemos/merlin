@@ -19,7 +19,7 @@ pub struct BedrockProvider {
 impl BedrockProvider {
     pub fn new(access_key: String, secret_key: String, region: String, model: String) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::providers::default_http_client(),
             access_key,
             secret_key,
             region,
