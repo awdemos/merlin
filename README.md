@@ -37,9 +37,9 @@ All routing decisions happen in **under a millisecond** thanks to Rust + Tokio a
 | Feature | Detail |
 |---------|--------|
 | 🔌 **Multi-Provider** | OpenAI, Anthropic, Gemini, local GGUF models — all via a single endpoint |
-| 🧠 **Smart Routing** | Epsilon-greedy and Thompson sampling bandit algorithms |
+| 🧠 **Smart Routing** | Epsilon-greedy, Thompson sampling, UCB, and contextual bandit algorithms |
 | 📊 **Real-Time Metrics** | Latency, cost, and quality tracking per provider |
-| 🏆 **Quality Judging** | On-device GPT-2 reward model for response scoring |
+| 🔄 **Learning from Feedback** | Star ratings + comment sentiment feed the bandit reward; request success/failure rewards are automatic |
 | 📈 **Observability** | Prometheus metrics, Jaeger tracing, Grafana dashboards |
 | 🦀 **Zero GC Pauses** | Rust + Tokio async for predictable, sub-ms routing |
 | 🔒 **Security Hardened** | Systemd service with non-root execution, memory limits, auto-restart |
@@ -78,7 +78,7 @@ EOF
 
 ## 🧠 Routing Algorithms
 
-Merlin implements two multi-armed bandit strategies for provider selection:
+Merlin implements several multi-armed bandit strategies for provider selection:
 
 ### Epsilon-Greedy
 Explores random providers with probability ε, otherwise exploits the current best.
@@ -97,17 +97,22 @@ Bayesian approach that naturally balances exploration and exploitation based on 
 policy = "thompson_sampling"
 ```
 
+### Upper Confidence Bound (UCB)
+Optimistic exploration bonus that favors under-sampled providers.
+
+### Contextual Bandit
+A per-model linear model over prompt features (domain, task type, complexity, keywords) that learns which model fits which kind of prompt.
+
 ### Reward Function
-Merlin scores each response using a composite reward:
+Each provider arm accumulates reward from two real signals:
 
-```
-reward = α·(1/latency) + β·(1/cost) + γ·quality_score
-```
+- **Request outcomes** — a successful provider response adds a positive reward; a failure adds zero (and the router fails over to the next provider).
+- **User feedback** — star ratings (1–5) are scaled to 0–1, weighted by feedback type (quality and overall count at full weight, speed and cost less), and adjusted by a keyword sentiment scan of the comment ("excellent" pushes the reward up, "terrible" pulls it down). Feedback submitted to `/feedback` is applied to the bandit arms with per-model watermarks, so rewards are never double-counted.
 
-Where `quality_score` comes from either:
-- User feedback (explicit thumbs up/down)
-- On-device GPT-2 reward model (automatic)
-- Task-specific heuristics
+> **Note:** prompt embeddings in the contextual bandit are currently a
+> lightweight hash-based placeholder, not a trained embedding model. Routing
+> still uses the structured prompt features (domain, task, complexity,
+> keywords), but the embedding dimensions carry no semantic signal yet.
 
 ---
 
@@ -125,10 +130,14 @@ curl -X POST http://localhost:7777/chat \
 {
   "response": "The capital of France is Paris.",
   "provider": "openai",
-  "latency_ms": 245,
-  "cost_estimate": 0.002
+  "model": "gpt-4-turbo",
+  "session_id": "9f2c..."
 }
 ```
+
+The model is chosen per-prompt by the routing policy; if the selected
+provider fails, Merlin automatically fails over to the next candidate. Pass
+`session_id` to `/feedback` to rate the response and teach the router.
 
 ### Health & Metrics
 
@@ -209,10 +218,11 @@ Service features:
 - [x] Epsilon-greedy & Thompson sampling
 - [x] Prometheus metrics
 - [x] Systemd service deployment
+- [x] Automatic provider failover
 - [ ] TensorRT-LLM backend for local GPU inference
 - [ ] Dynamic model warm/cold pool management
 - [ ] Distributed routing cluster (Raft consensus)
-- [ ] Automatic fallback chaining with circuit breakers
+- [ ] Circuit breakers per provider
 
 ---
 

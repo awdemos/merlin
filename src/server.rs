@@ -1,433 +1,346 @@
 use axum::{
-    extract::{State, Path},
-    http::StatusCode,
-    response::Json,
-    routing::{get, post, delete, put},
-    Router,
+    body::{Body, Bytes},
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response, Sse},
+    routing::{get, post},
+    Json, Router,
 };
-use serde::{Deserialize, Serialize};
-use crate::preferences::models::{OptimizationTarget as ModelsOptimizationTarget};
-
-fn convert_optimization_target(api_target: &crate::api::OptimizationTarget) -> ModelsOptimizationTarget {
-    match api_target {
-        crate::api::OptimizationTarget::Quality => ModelsOptimizationTarget::Quality,
-        crate::api::OptimizationTarget::Speed => ModelsOptimizationTarget::Speed,
-        crate::api::OptimizationTarget::Cost => ModelsOptimizationTarget::Cost,
-        crate::api::OptimizationTarget::Balanced => ModelsOptimizationTarget::Balanced,
-    }
-}
-
+use futures::StreamExt;
+use serde_json::json;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use crate::{IntelligentModelSelector, FeedbackProcessor, api::{ModelSelectRequest, ModelSelectResponse, FeedbackRequest, FeedbackResponse}};
-use crate::providers::{MerlinConfig, ProviderRegistry, CapabilityLoader};
+use std::time::Duration;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
 
-/// Request payload for the chat endpoint.
-#[derive(Deserialize)]
-pub struct ChatRequest {
-    /// The prompt text to send to the LLM.
-    pub prompt: String,
-    /// Maximum tokens for the response (optional).
-    pub max_tokens: Option<usize>,
+use crate::config::MerlinConfig;
+use crate::engine::RouterEngine;
+use crate::protocol::{
+    AggLlmResponse, ContentBlock, LlmResponse, LlmResponseChunk, LlmResponseStreamEvent, Request,
+};
+use crate::translation::WireCodec;
+
+pub type AppState = Arc<RouterEngine>;
+
+#[derive(Clone)]
+pub struct ServerState {
+    engine: AppState,
 }
 
-/// Response from the chat endpoint containing the generated text.
-#[derive(Serialize)]
-pub struct ChatResponse {
-    /// The generated response text.
-    pub response: String,
-    /// Name of the provider that generated the response.
-    pub provider: String,
+pub async fn serve(addr: SocketAddr, config_path: Option<&str>) -> anyhow::Result<()> {
+    let config = if let Some(path) = config_path {
+        MerlinConfig::load_from_file(path)?
+    } else {
+        MerlinConfig::default()
+    };
+    let engine = Arc::new(RouterEngine::new(config)?);
+
+    let app = create_app(engine);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    Ok(())
 }
 
-/// Error response payload for API errors.
-#[derive(Serialize)]
-pub struct ErrorResponse {
-    /// Human-readable error message.
-    pub error: String,
-}
+pub fn create_app(engine: AppState) -> Router {
+    let state = ServerState { engine };
 
-/// Creates a basic Axum router with health, chat, and metrics endpoints.
-///
-/// For full functionality including model selection and feedback,
-/// use [`create_server_with_state`] instead.
-pub fn create_server() -> Router {
+    let cors = CorsLayer::new()
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .allow_origin(Any);
+
     Router::new()
         .route("/health", get(health_check))
-        .route("/chat", post(handle_chat))
-        .route("/metrics", get(get_metrics))
+        .route("/v1/models", get(list_models))
+        .route("/v1/chat/completions", post(openai_chat_completions))
+        .route("/v1/messages", post(anthropic_messages))
+        .route("/v1/decision", post(decision_only))
+        .route("/v1/feedback", post(feedback))
+        .route("/metrics", get(prometheus_metrics))
+        .layer(TraceLayer::new_for_http())
+        .layer(cors)
+        .layer(TimeoutLayer::new(Duration::from_secs(300)))
+        .with_state(state)
 }
 
-pub mod ab_testing;
-pub mod enhanced_model_select;
-pub mod preferences;
-pub mod openai_compatible;
-
-/// Shared application state for the Merlin server.
-///
-/// Contains all the services needed for request handling including
-/// model selection, feedback processing, user preferences, and A/B testing.
-#[derive(Clone)]
-pub struct AppState {
-    /// Intelligent model selector for choosing the best LLM.
-    pub model_selector: Arc<tokio::sync::Mutex<IntelligentModelSelector>>,
-    /// Feedback processor for handling user ratings.
-    pub feedback_processor: Arc<tokio::sync::Mutex<FeedbackProcessor>>,
-    /// User preference management state.
-    pub preference_server_state: Arc<crate::server::preferences::PreferenceServerState>,
-    /// A/B testing experiment runner.
-    pub experiment_runner: Arc<tokio::sync::Mutex<crate::ab_testing::experiment::ExperimentRunner>>,
-    /// Enhanced model selector with A/B testing support. Shared across
-    /// requests so contextual bandit learning persists.
-    pub enhanced_model_selector: Arc<tokio::sync::Mutex<crate::ab_testing::EnhancedModelSelector>>,
-    pub provider_registry: Arc<ProviderRegistry>,
-    pub capability_loader: Arc<tokio::sync::Mutex<CapabilityLoader>>,
-}
-
-impl AsRef<Arc<crate::preferences::PreferenceManager>> for AppState {
-    fn as_ref(&self) -> &Arc<crate::preferences::PreferenceManager> {
-        &self.preference_server_state.preference_manager
-    }
-}
-
-/// Creates a fully-featured Axum router with all endpoints and state.
-///
-/// Initializes all services (model selector, feedback processor, preferences, A/B testing)
-/// and returns a router ready for production use.
-///
-/// # Errors
-///
-/// Returns an error if initialization of any service fails.
-pub async fn create_server_with_state() -> anyhow::Result<Router> {
-    // Load configuration
-    let config_path = std::env::var("MERLIN_CONFIG").unwrap_or_else(|_| "merlin.toml".to_string());
-    let config = MerlinConfig::load_from_file(&config_path)
-        .unwrap_or_else(|_| {
-            tracing::warn!("Failed to load config from {}, using defaults", config_path);
-            MerlinConfig::load_from_env().unwrap_or_else(|_| {
-                tracing::warn!("Failed to load config from env, using hardcoded defaults");
-                MerlinConfig::default()
-            })
-        });
-
-    // Initialize provider registry
-    let mut provider_registry = ProviderRegistry::new();
-    provider_registry.register_default_factories();
-    
-    // Initialize capability loader
-    let mut capability_loader = CapabilityLoader::new();
-    let capabilities_file = config.routing.capabilities_file.as_deref().unwrap_or("capabilities.toml");
-    if let Err(e) = capability_loader.load_from_file(capabilities_file).await {
-        tracing::warn!("Failed to load capabilities from {}: {}", capabilities_file, e);
-        // Use default capabilities as fallback
-        capability_loader = CapabilityLoader::get_default_capabilities();
-    }
-
-    let capability_loader_arc = Arc::new(tokio::sync::Mutex::new(capability_loader));
-    
-    let model_selector = Arc::new(
-        tokio::sync::Mutex::new(IntelligentModelSelector::new_with_capability_loader(
-            capability_loader_arc.clone()
-        ).await?)
-    );
-
-    let feedback_processor = Arc::new(
-        tokio::sync::Mutex::new(FeedbackProcessor::new().await?)
-    );
-
-    let preference_server_state = Arc::new(
-        crate::server::preferences::PreferenceServerState::new().await?
-    );
-
-    // Initialize experiment storage
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
-    let experiment_storage: Box<dyn crate::ab_testing::ExperimentStorage> = match crate::ab_testing::storage::RedisExperimentStorage::new(&redis_url).await {
-        Ok(storage) => Box::new(storage),
-        Err(_) => {
-            tracing::warn!("Redis not available, using in-memory storage for experiments");
-            Box::new(crate::ab_testing::storage::InMemoryExperimentStorage::new())
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    let terminate = async {
+        #[cfg(unix)]
+        {
+            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler");
+            sig.recv().await;
         }
     };
 
-    let experiment_runner = Arc::new(
-        tokio::sync::Mutex::new(crate::ab_testing::experiment::ExperimentRunner::new(experiment_storage))
-    );
-
-    // Shared enhanced selector: creating one per request would reset the
-    // contextual bandit state (and open a new Redis connection) every time.
-    let enhanced_model_selector = Arc::new(
-        tokio::sync::Mutex::new(
-            crate::ab_testing::EnhancedModelSelector::new(experiment_runner.clone()).await?
-        )
-    );
-    
-    let app_state = AppState {
-        model_selector,
-        feedback_processor,
-        preference_server_state,
-        experiment_runner,
-        enhanced_model_selector,
-        provider_registry: Arc::new(provider_registry),
-        capability_loader: capability_loader_arc.clone(),
-    };
-
-    let app = Router::new()
-        .route("/health", get(health_check))
-        .route("/chat", post(handle_chat))
-        .route("/metrics", get(get_metrics))
-        .route("/modelSelect", post(handle_model_select))
-        .route("/feedback", post(handle_feedback))
-        // User preference CRUD endpoints
-        .route("/preferences/users", post(create_user_preferences_wrapper))
-        .route("/preferences/users/:user_id", get(get_user_preferences_wrapper))
-        .route("/preferences/users/:user_id", put(update_user_preferences_wrapper))
-        .route("/preferences/users/:user_id", delete(delete_user_preferences_wrapper))
-        .route("/preferences/users", get(list_users_wrapper))
-        .route("/preferences/validate", post(validate_preferences_wrapper))
-        // A/B testing endpoints
-        .merge(crate::server::ab_testing::create_ab_testing_routes())
-        // Enhanced model selection endpoints
-        .merge(crate::server::enhanced_model_select::create_enhanced_model_select_routes())
-        // OpenAI-compatible endpoints
-        .merge(crate::server::openai_compatible::create_openai_compatible_routes())
-        .with_state(app_state);
-
-    Ok(app)
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 async fn health_check() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "ok",
-        "version": env!("CARGO_PKG_VERSION")
+    Json(json!({"status": "ok"}))
+}
+
+async fn list_models(State(state): State<ServerState>) -> Json<serde_json::Value> {
+    Json(json!({
+        "object": "list",
+        "data": state.engine.route_models()
     }))
 }
 
-async fn handle_chat() -> Result<Json<ChatResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // This would need dependency injection of the actual router
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ErrorResponse {
-            error: "Chat endpoint not implemented yet - needs DI setup".to_string(),
-        }),
-    ))
-}
-
-async fn get_metrics() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "metrics": "Not implemented yet"
-    }))
-}
-
-async fn handle_model_select(
-    State(app_state): State<AppState>,
-    Json(request): Json<ModelSelectRequest>,
-) -> Result<Json<ModelSelectResponse>, (StatusCode, Json<ErrorResponse>)> {
-    match app_state.model_selector.lock().await.select_model(request).await {
-        Ok(response) => Ok(Json(response)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )),
+async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
+    match state.engine.metrics().encode() {
+        Ok(text) => Response::builder()
+            .header("Content-Type", "text/plain; version=0.0.4")
+            .body(Body::from(text))
+            .unwrap_or_default(),
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::from(format!("metrics error: {}", e)))
+            .unwrap_or_default(),
     }
 }
 
-async fn handle_feedback(
-    State(app_state): State<AppState>,
-    Json(request): Json<FeedbackRequest>,
-) -> Result<Json<FeedbackResponse>, (StatusCode, Json<ErrorResponse>)> {
-    if request.rating < 1 || request.rating > 5 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Rating must be between 1 and 5".to_string(),
-            }),
-        ));
-    }
-
-    match app_state.feedback_processor.lock().await.process_feedback(&request).await {
-        Ok(_) => Ok(Json(FeedbackResponse {
-            success: true,
-            message: "Feedback processed successfully".to_string(),
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to process feedback: {}", e),
-            }),
-        )),
-    }
-}
-
-// === Preference API Wrappers ===
-
-async fn create_user_preferences_wrapper(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::preferences::CreateUserPreferenceRequest>,
-) -> Result<Json<crate::api::preferences::UserPreferenceResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let manager = &state.preference_server_state.preference_manager;
-
-    let update_request = crate::preferences::models::PreferenceUpdateRequest {
-        user_id: request.user_id.clone(),
-        optimize_for: request.optimize_for.as_ref().map(|t| convert_optimization_target(t)),
-        max_tokens: request.max_tokens,
-        temperature: request.temperature,
-        custom_weights: request.custom_weights,
-        preferred_models: request.preferred_models,
-        excluded_models: request.excluded_models,
-        learning_enabled: request.learning_enabled,
+async fn openai_chat_completions(
+    State(state): State<ServerState>,
+    _headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let codec = crate::translation::openai::OpenAiChatCodec;
+    let request = match decode_request(body, &codec) {
+        Ok(req) => req,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("bad request: {}", e)),
     };
 
-    match manager.update_preferences(update_request).await {
-        Ok(response) => Ok(Json(crate::api::preferences::UserPreferenceResponse {
-            success: response.success,
-            preferences: response.preferences,
-            message: response.message,
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to create user preferences: {}", e),
-            }),
-        )),
-    }
-}
+    let route_name = infer_route(
+        &state.engine,
+        request.llm_request.model.as_deref().unwrap_or(""),
+    );
 
-async fn get_user_preferences_wrapper(
-    State(state): State<AppState>,
-    Path(user_id): Path<String>,
-) -> Result<Json<crate::api::preferences::UserPreferenceResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let manager = &state.preference_server_state.preference_manager;
-
-    match manager.get_preferences(&user_id).await {
-        Ok(preferences) => Ok(Json(crate::api::preferences::UserPreferenceResponse {
-            success: true,
-            preferences: Some(preferences),
-            message: "Preferences retrieved successfully".to_string(),
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to retrieve user preferences: {}", e),
-            }),
-        )),
-    }
-}
-
-async fn update_user_preferences_wrapper(
-    State(state): State<AppState>,
-    Path(user_id): Path<String>,
-    Json(request): Json<crate::api::preferences::UpdateUserPreferenceRequest>,
-) -> Result<Json<crate::api::preferences::UserPreferenceResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let manager = &state.preference_server_state.preference_manager;
-
-    let update_request = crate::preferences::models::PreferenceUpdateRequest {
-        user_id: user_id.clone(),
-        optimize_for: request.optimize_for.as_ref().map(|t| convert_optimization_target(t)),
-        max_tokens: request.max_tokens,
-        temperature: request.temperature,
-        custom_weights: request.custom_weights,
-        preferred_models: request.preferred_models,
-        excluded_models: request.excluded_models,
-        learning_enabled: request.learning_enabled,
-    };
-
-    match manager.update_preferences(update_request).await {
-        Ok(response) => Ok(Json(crate::api::preferences::UserPreferenceResponse {
-            success: response.success,
-            preferences: response.preferences,
-            message: response.message,
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to update user preferences: {}", e),
-            }),
-        )),
-    }
-}
-
-async fn delete_user_preferences_wrapper(
-    State(state): State<AppState>,
-    Path(user_id): Path<String>,
-) -> Result<Json<crate::api::preferences::DeleteUserPreferenceResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let manager = &state.preference_server_state.preference_manager;
-
-    match manager.delete_user_preferences(&user_id).await {
-        Ok(deleted) => Ok(Json(crate::api::preferences::DeleteUserPreferenceResponse {
-            success: deleted,
-            message: if deleted {
-                "User preferences deleted successfully".to_string()
+    let stream = request.llm_request.stream;
+    match state.engine.execute(&route_name, request).await {
+        Ok(LlmResponse::Aggregate(agg)) => Json(openai_aggregate_response(&agg)).into_response(),
+        Ok(LlmResponse::Stream(s)) => {
+            if stream {
+                sse_stream(s, &codec).into_response()
             } else {
-                "User preferences not found".to_string()
-            },
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to delete user preferences: {}", e),
-            }),
-        )),
+                match crate::engine::aggregate_stream(s).await {
+                    Ok(agg) => Json(openai_aggregate_response(&agg)).into_response(),
+                    Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+        }
+        Err(e) => error_response(StatusCode::BAD_GATEWAY, &e.to_string()),
     }
 }
 
-async fn list_users_wrapper(
-    State(state): State<AppState>,
-) -> Result<Json<crate::api::preferences::ListUsersResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let manager = &state.preference_server_state.preference_manager;
-
-    match manager.get_all_users().await {
-        Ok(users) => Ok(Json(crate::api::preferences::ListUsersResponse {
-            success: true,
-            users,
-            message: "Users retrieved successfully".to_string(),
-        })),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to retrieve users: {}", e),
-            }),
-        )),
-    }
-}
-
-async fn validate_preferences_wrapper(
-    Json(request): Json<crate::api::preferences::PreferenceValidationRequest>,
-) -> Result<Json<crate::api::preferences::PreferenceValidationResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let mut errors = Vec::new();
-    let warnings = Vec::new();
-
-    // Validate user ID
-    if request.user_id.is_empty() {
-        errors.push("User ID cannot be empty".to_string());
-    }
-
-    // Validate temperature
-    if let Some(temp) = request.preferences.temperature {
-        if temp < 0.0 || temp > 2.0 {
-            errors.push("Temperature must be between 0.0 and 2.0".to_string());
-        }
-    }
-
-    // Validate max tokens
-    if let Some(tokens) = request.preferences.max_tokens {
-        if tokens < 1 || tokens > 32000 {
-            errors.push("Max tokens must be between 1 and 32000".to_string());
-        }
-    }
-
-    let is_valid = errors.is_empty();
-    let message = if is_valid {
-        "Preferences are valid".to_string()
-    } else {
-        "Preferences have validation errors".to_string()
+async fn anthropic_messages(
+    State(state): State<ServerState>,
+    _headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let codec = crate::translation::anthropic::AnthropicMessagesCodec;
+    let request = match decode_request(body, &codec) {
+        Ok(req) => req,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("bad request: {}", e)),
     };
 
-    Ok(Json(crate::api::preferences::PreferenceValidationResponse {
-        success: true,
-        valid: is_valid,
-        errors,
-        warnings,
-        message,
-    }))
+    let route_name = infer_route(
+        &state.engine,
+        request.llm_request.model.as_deref().unwrap_or(""),
+    );
+    let stream = request.llm_request.stream;
+
+    match state.engine.execute(&route_name, request).await {
+        Ok(LlmResponse::Aggregate(agg)) => Json(anthropic_aggregate_response(&agg)).into_response(),
+        Ok(LlmResponse::Stream(s)) => {
+            if stream {
+                sse_stream(s, &codec).into_response()
+            } else {
+                match crate::engine::aggregate_stream(s).await {
+                    Ok(agg) => Json(anthropic_aggregate_response(&agg)).into_response(),
+                    Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+        }
+        Err(e) => error_response(StatusCode::BAD_GATEWAY, &e.to_string()),
+    }
+}
+
+async fn decision_only(
+    State(state): State<ServerState>,
+    _headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let codec = crate::translation::openai::OpenAiChatCodec;
+    let request = match decode_request(body, &codec) {
+        Ok(req) => req,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("bad request: {}", e)),
+    };
+    let route_name = infer_route(
+        &state.engine,
+        request.llm_request.model.as_deref().unwrap_or(""),
+    );
+    match state.engine.decide(&route_name, request).await {
+        Ok(outcome) => Json(json!({
+            "selected": outcome.target.name,
+            "client": outcome.target.client,
+            "model": outcome.target.model_id,
+            "fallbacks": outcome.fallback_chain,
+        }))
+        .into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn feedback(
+    State(_state): State<ServerState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Response {
+    let route_name = payload
+        .get("route")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let _target = payload.get("target").and_then(|v| v.as_str());
+    let _reward = payload
+        .get("reward")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let _request_id = payload.get("request_id").and_then(|v| v.as_str());
+    tracing::info!("feedback received for route {}", route_name);
+    Json(json!({"status": "ok"})).into_response()
+}
+
+fn infer_route(engine: &RouterEngine, model_id: &str) -> String {
+    if engine.list_routes().contains(&model_id.to_string()) {
+        model_id.to_string()
+    } else {
+        engine
+            .list_routes()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "default".to_string())
+    }
+}
+
+fn decode_request(body: Bytes, codec: &dyn WireCodec) -> anyhow::Result<Request> {
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    codec.decode_request(value)
+}
+
+fn openai_aggregate_response(agg: &AggLlmResponse) -> serde_json::Value {
+    let text = agg.assistant_text();
+    let mut tool_calls = Vec::new();
+    if let Some(calls) = &agg.tool_calls {
+        for call in calls {
+            tool_calls.push(json!({
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.function.name,
+                    "arguments": call.function.arguments,
+                }
+            }));
+        }
+    }
+    json!({
+        "id": agg.id,
+        "object": "chat.completion",
+        "created": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        "model": agg.model,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": if text.is_empty() { serde_json::Value::Null } else { json!(text) },
+                "tool_calls": if tool_calls.is_empty() { serde_json::Value::Null } else { json!(tool_calls) },
+            },
+            "finish_reason": encode_stop_reason(agg.stop_reason),
+        }],
+        "usage": {
+            "prompt_tokens": agg.usage.prompt_tokens,
+            "completion_tokens": agg.usage.completion_tokens,
+            "total_tokens": agg.usage.total_tokens,
+        }
+    })
+}
+
+fn anthropic_aggregate_response(agg: &AggLlmResponse) -> serde_json::Value {
+    let text = agg.assistant_text();
+    json!({
+        "id": agg.id,
+        "type": "message",
+        "role": "assistant",
+        "model": agg.model,
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": match agg.stop_reason {
+            crate::protocol::StopReason::Stop => serde_json::Value::String("end_turn".to_string()),
+            crate::protocol::StopReason::Length => serde_json::Value::String("max_tokens".to_string()),
+            crate::protocol::StopReason::ToolCalls => serde_json::Value::String("tool_use".to_string()),
+            _ => serde_json::Value::Null,
+        },
+        "usage": {
+            "input_tokens": agg.usage.prompt_tokens,
+            "output_tokens": agg.usage.completion_tokens,
+        }
+    })
+}
+
+fn encode_stop_reason(reason: crate::protocol::StopReason) -> serde_json::Value {
+    match reason {
+        crate::protocol::StopReason::Stop => json!("stop"),
+        crate::protocol::StopReason::Length => json!("length"),
+        crate::protocol::StopReason::ToolCalls => json!("tool_calls"),
+        crate::protocol::StopReason::ContentFilter => json!("content_filter"),
+        crate::protocol::StopReason::Unknown => serde_json::Value::Null,
+    }
+}
+
+fn sse_stream(
+    stream: crate::protocol::LlmResponseStream,
+    _codec: &dyn WireCodec,
+) -> Sse<impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>
+{
+    let events = stream.inner.map(move |event: LlmResponseStreamEvent| {
+        let data = match event.chunk {
+            LlmResponseChunk::ContentDelta {
+                block: ContentBlock::Text { text },
+            } => json!({
+                "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": null}]
+            }),
+            LlmResponseChunk::ContentDelta { .. } => json!({}),
+            LlmResponseChunk::ToolCallDelta { calls } => json!({
+                "choices": [{"delta": {"tool_calls": calls}, "index": 0, "finish_reason": null}],
+            }),
+            LlmResponseChunk::Done => {
+                json!({"choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]})
+            }
+            _ => json!({}),
+        };
+        Ok(axum::response::sse::Event::default().data(data.to_string()))
+    });
+    Sse::new(events).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text(""),
+    )
+}
+
+fn error_response(status: StatusCode, message: &str) -> Response {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({"error": message}).to_string()))
+        .unwrap_or_default()
 }

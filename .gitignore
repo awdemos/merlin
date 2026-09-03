@@ -1,9 +1,13 @@
 /target
 /ci/build/
+libnull.rlib
 
 # Claude Code files
 .claude/
 *.claude
+
+# OpenCode files
+.opencode/
 
 # Memory and temporary files
 memory/
