@@ -1,82 +1,42 @@
-# Merlin Configuration Example
+# Merlin production-grade configuration example.
 
 [server]
 host = "0.0.0.0"
 port = 7777
 
-[providers.openai]
-enabled = false
-api_key = "${OPENAI_API_KEY}"
-model = "gpt-4-turbo"
+[clients.openai]
+format = "openai_chat"
 base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+max_retries = 2
 
-[providers.anthropic]
-enabled = false
-api_key = "${ANTHROPIC_API_KEY}"
-model = "claude-3-sonnet-20240229"
+[clients.anthropic]
+format = "anthropic_messages"
 base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+max_retries = 2
 
-[providers.mistral]
-enabled = false
-api_key = "${MISTRAL_API_KEY}"
-model = "mistral-medium"
-base_url = "https://api.mistral.ai/v1"
+[targets.gpt4]
+client = "openai"
+model = "gpt-4o"
 
-[providers.gemini]
-enabled = false
-api_key = "${GEMINI_API_KEY}"
-model = "gemini-pro"
+[targets.claude_sonnet]
+client = "anthropic"
+model = "claude-3-5-sonnet-20241022"
 
-[providers.groq]
-enabled = false
-api_key = "${GROQ_API_KEY}"
-model = "llama-3-70b"
-base_url = "https://api.groq.com/openai/v1"
+[routes.default]
+id = "default"
+targets = ["gpt4", "claude_sonnet"]
 
-[providers.ollama] 
-enabled = true
-endpoint = "http://localhost:11434"
-model = "llama2"
-
-[providers.grok]
-enabled = false
-api_key = "${GROK_API_KEY}"
-model = "grok-beta"
-base_url = "https://api.x.ai/v1"
-
-[providers.zai]
-enabled = false
-api_key = "${ZAI_API_KEY}"
-model = "zai-13b"
-base_url = "https://api.z.ai/v1"
-
-[providers.moonshot]
-enabled = false
-api_key = "${MOONSHOT_API_KEY}"
-model = "moonshot-v1-8k"
-base_url = "https://api.moonshot.cn/v1"
-
-[providers.bedrock]
-enabled = false
-access_key = "${AWS_ACCESS_KEY_ID}"
-secret_key = "${AWS_SECRET_ACCESS_KEY}"
-region = "${AWS_REGION:-us-east-1}"
-model = "anthropic.claude-3-sonnet-20240229-v1:0"
-
-[providers.lambdalabs]
-enabled = false
-api_key = "${LAMBDA_LABS_API_KEY}"
-model = "hermes-2-pro-llama-3-8b"
-base_url = "https://api.lambdalabs.com/v1"
-
-[routing]
-policy = "epsilon_greedy"  # or "thompson_sampling"
+[routes.default.algorithm]
+type = "epsilon_greedy"
+targets = ["gpt4", "claude_sonnet"]
 epsilon = 0.15
-capabilities_file = "capabilities.toml"
 
-[metrics]
-redis_url = "redis://127.0.0.1:6379"
+[routes.passthrough]
+id = "passthrough"
+targets = ["gpt4"]
 
-[telemetry]
-prometheus_port = 9090
-jaeger_endpoint = "http://localhost:14268/api/traces"
+[routes.passthrough.algorithm]
+type = "passthrough"
+target = "gpt4"

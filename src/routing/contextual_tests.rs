@@ -176,4 +176,72 @@ mod tests {
         // Allow more tolerance since this is simple linear learning
         assert!((prediction - target_reward).abs() < 0.5);
     }
+
+    #[test]
+    fn test_score_only_update_moves_bias() {
+        let feature_dim = 2;
+        let mut arm = ContextualArm::new(feature_dim);
+
+        // Rewards without context features accumulate on the bias
+        arm.update_with_score(1.0, 0.1);
+        arm.update_with_score(1.0, 0.1);
+
+        assert_eq!(arm.num_pulls, 2);
+        assert_eq!(arm.total_reward, 2.0);
+        assert!(arm.bias > 0.0, "bias should move toward the reward");
+        // Prediction reflects the learned bias
+        assert!(arm.predict(&[1.0, 1.0]) > 0.0);
+    }
+
+    #[test]
+    fn test_binary_reward_updates_contextual_arm() {
+        let mut policy = RoutingPolicy::new_contextual(2, 2, 0.1, 0.0);
+
+        // update_reward previously no-op'd for Contextual policies
+        policy.update_reward(0, true);
+
+        if let RoutingPolicy::Contextual { arms, .. } = &policy {
+            let arm = arms.get(&0).unwrap();
+            assert_eq!(arm.num_pulls, 1);
+            assert_eq!(arm.total_reward, 1.0);
+            assert!(arm.bias > 0.0);
+        } else {
+            panic!("Expected Contextual routing policy");
+        }
+    }
+
+    #[test]
+    fn test_cold_start_tie_breaks_toward_unpulled_arms() {
+        let mut policy = RoutingPolicy::new_contextual(3, 2, 0.1, 0.0);
+        let features = vec![1.0, 1.0];
+
+        // All arms predict 0.0 with zero pulls: first arm wins the tie
+        assert_eq!(policy.select_index_with_context(3, &features), 0);
+
+        // A failed pull leaves the score at 0.0 but records a pull, so the
+        // least-pulled arm (arm 1) must be walked next instead of always
+        // re-picking arm 0
+        policy.update_reward_with_score(0, 0.0);
+        assert_eq!(policy.select_index_with_context(3, &features), 1);
+
+        policy.update_reward_with_score(1, 0.0);
+        assert_eq!(policy.select_index_with_context(3, &features), 2);
+    }
+
+    #[test]
+    fn test_rewards_change_exploit_selection() {
+        let mut policy = RoutingPolicy::new_contextual(2, 2, 0.1, 0.0);
+        let features = vec![1.0, 1.0];
+
+        // Walk both arms once so neither is preferred for being unpulled
+        policy.update_reward_with_score(0, 1.0);
+        policy.update_reward_with_score(1, 0.0);
+
+        // Arm 0 received the better reward, so exploiting must pick it —
+        // and keep picking it as its bias grows
+        for _ in 0..3 {
+            assert_eq!(policy.select_index_with_context(2, &features), 0);
+            policy.update_reward_with_score(0, 1.0);
+        }
+    }
 }
