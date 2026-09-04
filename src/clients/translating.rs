@@ -69,8 +69,8 @@ impl TranslatingLlmClient {
 
     fn path(&self) -> &'static str {
         match self.format {
-            WireFormat::AnthropicMessages => "/v1/messages",
-            _ => "/v1/chat/completions",
+            WireFormat::AnthropicMessages => "/messages",
+            _ => "/chat/completions",
         }
     }
 }

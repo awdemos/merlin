@@ -4,6 +4,12 @@
 host = "0.0.0.0"
 port = 7777
 
+[clients.ollama]
+format = "openai_chat"
+base_url = "http://localhost:11434/v1"
+api_key_env = "OLLAMA_API_KEY"
+max_retries = 1
+
 [clients.openai]
 format = "openai_chat"
 base_url = "https://api.openai.com/v1"
@@ -16,6 +22,10 @@ base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 max_retries = 2
 
+[targets.qwen_ollama]
+client = "ollama"
+model = "qwen3.8-27b-uncensored-cyber-q4_k_m:latest"
+
 [targets.gpt4]
 client = "openai"
 model = "gpt-4o"
@@ -26,17 +36,25 @@ model = "claude-3-5-sonnet-20241022"
 
 [routes.default]
 id = "default"
-targets = ["gpt4", "claude_sonnet"]
+targets = ["qwen_ollama"]
 
 [routes.default.algorithm]
-type = "epsilon_greedy"
-targets = ["gpt4", "claude_sonnet"]
-epsilon = 0.15
+type = "passthrough"
+target = "qwen_ollama"
 
 [routes.passthrough]
 id = "passthrough"
-targets = ["gpt4"]
+targets = ["qwen_ollama"]
 
 [routes.passthrough.algorithm]
 type = "passthrough"
-target = "gpt4"
+target = "qwen_ollama"
+
+[routes.cloud]
+id = "cloud"
+targets = ["gpt4", "claude_sonnet"]
+
+[routes.cloud.algorithm]
+type = "epsilon_greedy"
+targets = ["gpt4", "claude_sonnet"]
+epsilon = 0.15
