@@ -66,7 +66,7 @@ mod tests {
                 },
             },
         );
-        Ok(RouterEngine::new(config)?)
+        RouterEngine::new(config)
     }
 
     #[tokio::test]
