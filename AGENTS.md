@@ -13,6 +13,9 @@ cargo build --release
 # Run tests
 cargo test
 
+# Verify the bandit routing core specs with Verus
+cargo verus verify
+
 # Run with clippy linting
 cargo clippy
 
@@ -40,11 +43,19 @@ cd ci && go run main.go
 - `src/lib.rs` - Core library with Router implementation
 - `src/main.rs` - Binary entry point with CLI
 - `src/server.rs` - HTTP server with health/chat/metrics endpoints
+- `src/features.rs` - Laya sidecar client: prompt-feature extraction, guard verdicts, fail-open caching
 - `src/providers/` - LLM provider implementations (OpenAI, Ollama)
-- `src/routing/` - Routing policies (Epsilon-Greedy, Thompson Sampling)
+- `src/routing/` - Routing policies (Epsilon-Greedy, Thompson Sampling, UCB)
+- `src/routing/contextual.rs` - LinUCB contextual bandit over sidecar prompt features
+- `src/routing/classifier.rs` - strong/weak classifier driven by sidecar difficulty features
+- `src/routing/bandit_verified.rs` - Verus-verified pure model of the bandit count/selection math
 - `src/metrics/` - Redis-based metrics collection
+- `sidecar/` - Python laya sidecar (FastAPI) that classifies prompts for routing/guard
+- `examples/laya-sidecar.toml` - example config wiring Merlin to the sidecar
 - `tests/` - Integration tests
 - `ci/` - Dagger Go SDK CI pipeline
+
+Note: in this environment builds/tests need `CARGO_TARGET_DIR=target LIBRARY_PATH=/var/home/a/.linuxbrew/lib` prefixes (workspace `.cargo/config.toml` redirects target-dir to an unwritable path).
 
 ## Dependencies
 

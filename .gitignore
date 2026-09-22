@@ -14,3 +14,4 @@ memory/
 *.tmp
 *.temp
 .desloppify/
+__pycache__/

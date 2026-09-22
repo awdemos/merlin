@@ -91,6 +91,10 @@ pub struct Request {
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub extra_body: HashMap<String, serde_json::Value>,
+    /// Sidecar-extracted prompt features; `None` when the sidecar is
+    /// disabled or unavailable (algorithms fall back to degraded signals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<crate::features::PromptFeatures>,
 }
 
 /// Outcome of routing: selected target + optional fallback chain.

@@ -102,6 +102,7 @@ pub fn decode_openai_request(body: Value) -> anyhow::Result<Request> {
         },
         metadata: None,
         extra_body,
+        features: None,
     })
 }
 

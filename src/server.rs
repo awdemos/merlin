@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -119,6 +119,12 @@ async fn openai_chat_completions(
         Ok(req) => req,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("bad request: {}", e)),
     };
+    if let Err(reason) = state.engine.guard_check(&request).await {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("blocked by prompt guard: {}", reason),
+        );
+    }
 
     let route_name = infer_route(
         &state.engine,
@@ -152,6 +158,12 @@ async fn anthropic_messages(
         Ok(req) => req,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("bad request: {}", e)),
     };
+    if let Err(reason) = state.engine.guard_check(&request).await {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("blocked by prompt guard: {}", reason),
+        );
+    }
 
     let route_name = infer_route(
         &state.engine,
@@ -185,6 +197,12 @@ async fn decision_only(
         Ok(req) => req,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("bad request: {}", e)),
     };
+    if let Err(reason) = state.engine.guard_check(&request).await {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("blocked by prompt guard: {}", reason),
+        );
+    }
     let route_name = infer_route(
         &state.engine,
         request.llm_request.model.as_deref().unwrap_or(""),
@@ -238,6 +256,7 @@ fn decode_request(body: Bytes, codec: &dyn WireCodec) -> anyhow::Result<Request>
 
 fn openai_aggregate_response(agg: &AggLlmResponse) -> serde_json::Value {
     let text = agg.assistant_text();
+    let content = if text.is_empty() { "" } else { text.as_str() };
     let mut tool_calls = Vec::new();
     if let Some(calls) = &agg.tool_calls {
         for call in calls {
@@ -263,8 +282,7 @@ fn openai_aggregate_response(agg: &AggLlmResponse) -> serde_json::Value {
             "index": 0,
             "message": {
                 "role": "assistant",
-                "content": if text.is_empty() { serde_json::Value::Null } else { json!(text) },
-                "tool_calls": if tool_calls.is_empty() { serde_json::Value::Null } else { json!(tool_calls) },
+                "content": content,
             },
             "finish_reason": encode_stop_reason(agg.stop_reason),
         }],
@@ -312,24 +330,52 @@ fn sse_stream(
     _codec: &dyn WireCodec,
 ) -> Sse<impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>
 {
-    let events = stream.inner.map(move |event: LlmResponseStreamEvent| {
-        let data = match event.chunk {
-            LlmResponseChunk::ContentDelta {
-                block: ContentBlock::Text { text },
-            } => json!({
-                "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": null}]
-            }),
-            LlmResponseChunk::ContentDelta { .. } => json!({}),
-            LlmResponseChunk::ToolCallDelta { calls } => json!({
-                "choices": [{"delta": {"tool_calls": calls}, "index": 0, "finish_reason": null}],
-            }),
-            LlmResponseChunk::Done => {
-                json!({"choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]})
-            }
-            _ => json!({}),
-        };
-        Ok(axum::response::sse::Event::default().data(data.to_string()))
-    });
+    let events = stream
+        .inner
+        .filter_map(move |event: LlmResponseStreamEvent| {
+            let data = match event.chunk {
+                LlmResponseChunk::ContentDelta {
+                    block: ContentBlock::Text { text },
+                } => Some(json!({
+                    "id": "chatcmpl-merlin",
+                    "object": "chat.completion.chunk",
+                    "created": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    "model": "merlin",
+                    "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": null}]
+                })),
+                LlmResponseChunk::ContentDelta { .. } => None,
+                LlmResponseChunk::ToolCallDelta { calls } => Some(json!({
+                    "id": "chatcmpl-merlin",
+                    "object": "chat.completion.chunk",
+                    "created": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    "model": "merlin",
+                    "choices": [{"delta": {"tool_calls": calls}, "index": 0, "finish_reason": null}],
+                })),
+                LlmResponseChunk::Done => Some(json!({
+                    "id": "chatcmpl-merlin",
+                    "object": "chat.completion.chunk",
+                    "created": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    "model": "merlin",
+                    "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
+                })),
+                LlmResponseChunk::Progress | LlmResponseChunk::Usage { .. } => None,
+            };
+            futures::future::ready(data.map(|d| {
+                Ok(axum::response::sse::Event::default().data(d.to_string()))
+            }))
+        })
+        .chain(futures::stream::once(async {
+            Ok(axum::response::sse::Event::default().data("[DONE]"))
+        }));
     Sse::new(events).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
@@ -341,6 +387,15 @@ fn error_response(status: StatusCode, message: &str) -> Response {
     Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
-        .body(Body::from(json!({"error": message}).to_string()))
+        .body(Body::from(
+            json!({
+                "error": {
+                    "message": message,
+                    "type": "merlin_error",
+                    "code": status.as_u16(),
+                }
+            })
+            .to_string(),
+        ))
         .unwrap_or_default()
 }

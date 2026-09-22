@@ -3,6 +3,7 @@
 use crate::config::TargetConfig;
 use crate::protocol::Request;
 
+pub mod bandit_verified;
 pub mod classifier;
 pub mod contextual;
 pub mod epsilon_greedy;
@@ -35,6 +36,13 @@ pub trait RoutingAlgorithm: Send + Sync + std::fmt::Debug {
 
     /// Record reward for a target selection. Default no-op.
     fn record_reward(&self, _target: &str, _request: &Request, _reward: f64) {}
+
+    /// Whether this algorithm consumes sidecar-extracted prompt features.
+    /// When true, the engine fetches features before `select` and attaches
+    /// them to the request so `record_reward` sees the same context.
+    fn needs_features(&self) -> bool {
+        false
+    }
 }
 
 /// Helpers to resolve fallback target configs by name.

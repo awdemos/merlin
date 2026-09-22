@@ -9,6 +9,37 @@ pub struct MerlinConfig {
     pub clients: HashMap<String, ClientConfig>,
     pub targets: HashMap<String, TargetConfig>,
     pub routes: HashMap<String, RouteConfig>,
+    #[serde(default)]
+    pub features: FeaturesConfig,
+}
+
+/// Feature-extraction sidecar (`laya`) integration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FeaturesConfig {
+    pub enabled: bool,
+    pub url: String,
+    pub timeout_ms: u64,
+    pub cache_entries: usize,
+    pub cache_ttl_secs: u64,
+    pub guard_enabled: bool,
+    pub jailbreak_threshold: f64,
+    pub prompt_injection_threshold: f64,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: "http://127.0.0.1:8765".to_string(),
+            timeout_ms: 100,
+            cache_entries: 512,
+            cache_ttl_secs: 300,
+            guard_enabled: false,
+            jailbreak_threshold: 0.85,
+            prompt_injection_threshold: 0.85,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

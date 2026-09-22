@@ -101,7 +101,7 @@ policy = "thompson_sampling"
 Optimistic exploration bonus that favors under-sampled providers.
 
 ### Contextual Bandit
-A per-model linear model over prompt features (domain, task type, complexity, keywords) that learns which model fits which kind of prompt.
+A per-arm LinUCB model over semantic prompt features (domain, difficulty, tool-need, sensitivity — see the laya sidecar below) that learns which model fits which kind of prompt. Cold-start spreads requests round-robin until rewards arrive; every reward updates the arm's ridge model with the features that drove the selection.
 
 ### Reward Function
 Each provider arm accumulates reward from two real signals:
@@ -109,10 +109,46 @@ Each provider arm accumulates reward from two real signals:
 - **Request outcomes** — a successful provider response adds a positive reward; a failure adds zero (and the router fails over to the next provider).
 - **User feedback** — star ratings (1–5) are scaled to 0–1, weighted by feedback type (quality and overall count at full weight, speed and cost less), and adjusted by a keyword sentiment scan of the comment ("excellent" pushes the reward up, "terrible" pulls it down). Feedback submitted to `/feedback` is applied to the bandit arms with per-model watermarks, so rewards are never double-counted.
 
-> **Note:** prompt embeddings in the contextual bandit are currently a
-> lightweight hash-based placeholder, not a trained embedding model. Routing
-> still uses the structured prompt features (domain, task, complexity,
-> keywords), but the embedding dimensions carry no semantic signal yet.
+> **Note:** the contextual bandit and `llm_classifier` consume features from the
+> laya sidecar (below). Without it, the bandit falls back to a degraded
+> prompt-length signal and the classifier falls back to a pure length
+> heuristic — both work, but with much less discrimination.
+
+---
+
+## 🧬 Semantic Routing with the Laya Sidecar
+
+Merlin can classify every prompt semantically before routing by talking to a
+small sidecar service that wraps [laya](https://pypi.org/project/laya/) — a
+non-autoregressive decision engine (~33 ms per prompt on GPU, 100+ languages).
+The sidecar replaces Merlin's old length-based heuristics with real signal:
+
+| Signal | Type | Drives |
+|--------|------|--------|
+| `domain` | choice (code, math, writing, factual, data, chitchat) | contextual bandit context vector |
+| `difficulty` | score 0–1 | `llm_classifier` strong/weak split, bandit context |
+| `is_sensitive` | probability | forces `llm_classifier` to the strong model ≥ 0.7 |
+| `needs_tools` | probability | bandit context |
+| `jailbreak` / `prompt_injection` | probability | pre-request guard (HTTP 400) |
+
+### Quick Start
+
+```bash
+# 1. Start the sidecar (downloads laya checkpoints on first run)
+pip install -r sidecar/requirements.txt
+python sidecar/app.py --port 8765
+
+# 2. Point Merlin at it
+./target/release/merlin serve --config examples/laya-sidecar.toml
+```
+
+Everything is config-gated and **fail-open**: if the sidecar is down, slow, or
+returns garbage, Merlin logs a warning and falls back to prompt-length
+heuristics — routing never breaks because the classifier did. Prompt features
+are cached per Merlin process (default 512 entries, 300 s TTL). Set
+`guard_enabled = true` to block jailbreak/injection prompts with HTTP 400
+before any provider is contacted. See `sidecar/README.md` for the HTTP API and
+`examples/laya-sidecar.toml` for the full `[features]` configuration.
 
 ---
 

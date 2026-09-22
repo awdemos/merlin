@@ -3,6 +3,7 @@
 use crate::clients::translating::TranslatingLlmClient;
 use crate::clients::LlmClient;
 use crate::config::{AlgorithmConfig, MerlinConfig, RouteConfig, TargetConfig};
+use crate::features::FeatureClient;
 use crate::metrics::Metrics;
 use crate::protocol::{
     AggLlmResponse, LlmResponse, LlmResponseStream, Request, RoutingOutcome, TargetRef,
@@ -20,6 +21,7 @@ pub struct RouterEngine {
     clients: HashMap<String, Arc<dyn LlmClient>>,
     routes: HashMap<String, Route>,
     metrics: Metrics,
+    features: Option<FeatureClient>,
 }
 
 #[derive(Debug)]
@@ -51,11 +53,23 @@ impl RouterEngine {
             );
         }
 
+        let features = if config.features.enabled {
+            Some(FeatureClient::new(
+                config.features.url.clone(),
+                config.features.timeout_ms,
+                config.features.cache_entries,
+                config.features.cache_ttl_secs,
+            ))
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             clients,
             routes,
             metrics: Metrics::new()?,
+            features,
         })
     }
 
@@ -101,6 +115,8 @@ impl RouterEngine {
             .iter()
             .filter_map(|t| self.config.targets.get(t).cloned())
             .collect();
+
+        self.attach_features(route, &mut request).await;
 
         let outcome = route.algorithm.select(&request, &targets)?;
         let selected = self.resolve_target(&outcome.selected)?;
@@ -158,11 +174,54 @@ impl RouterEngine {
             .iter()
             .filter_map(|t| self.config.targets.get(t).cloned())
             .collect();
+        self.attach_features(route, &mut request).await;
         let outcome = route.algorithm.select(&request, &targets)?;
         Ok(RoutingOutcome {
             target: self.resolve_target(&outcome.selected)?,
             fallback_chain: outcome.fallbacks,
         })
+    }
+
+    /// Fetch sidecar features for algorithms that need them and attach them
+    /// to the request so `select` and the later `record_reward` see the same
+    /// context. `None` on sidecar failure: algorithms fall back to degraded
+    /// local signals.
+    async fn attach_features(&self, route: &Route, request: &mut Request) {
+        if !route.algorithm.needs_features() {
+            return;
+        }
+        if let Some(client) = &self.features {
+            let prompt = request.llm_request.prompt_text();
+            request.features = client.features(&prompt).await;
+        }
+    }
+
+    /// Guardrail pre-filter: asks the sidecar for a verdict and blocks the
+    /// request when jailbreak / prompt-injection scores reach their
+    /// thresholds. Fail-open: disabled, no client, or sidecar error all
+    /// allow the request through.
+    pub async fn guard_check(&self, request: &Request) -> Result<(), String> {
+        let cfg = &self.config.features;
+        if !cfg.enabled || !cfg.guard_enabled {
+            return Ok(());
+        }
+        let client = match &self.features {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let prompt = request.llm_request.prompt_text();
+        match client.guard(&prompt).await {
+            None => Ok(()),
+            Some(verdict) => match verdict
+                .block_reason(cfg.jailbreak_threshold, cfg.prompt_injection_threshold)
+            {
+                Some(reason) => {
+                    tracing::info!("prompt blocked by guard: {}", reason);
+                    Err(reason)
+                }
+                None => Ok(()),
+            },
+        }
     }
 
     fn resolve_target(&self, name: &str) -> anyhow::Result<TargetRef> {
@@ -352,7 +411,9 @@ pub async fn aggregate_stream(stream: LlmResponseStream) -> anyhow::Result<AggLl
         id: String::new(),
         model: String::new(),
         content: if text.is_empty() {
-            Vec::new()
+            vec![crate::protocol::ContentBlock::Text {
+                text: String::new(),
+            }]
         } else {
             vec![crate::protocol::ContentBlock::Text { text }]
         },

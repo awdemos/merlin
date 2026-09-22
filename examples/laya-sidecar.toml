@@ -1,0 +1,57 @@
+# Example: Merlin routed by the laya feature-extraction sidecar.
+#
+# Requires the sidecar running (see sidecar/README.md):
+#   python sidecar/app.py --port 8765
+#
+# This config wires:
+#   - /features  -> semantic prompt features (domain, difficulty, sensitivity)
+#                   driving the LlmClassifier (strong vs weak model) and
+#                   the contextual bandit's learning signal
+#   - /guard     -> pre-request jailbreak / prompt-injection filter
+#
+# The "classifier" target is vestigial: the classifier lives in the sidecar,
+# but the algorithm config still references a target for validation. It never
+# receives traffic.
+
+[server]
+host = "127.0.0.1"
+port = 7788
+
+[clients.mock]
+format = "openai_chat"
+base_url = "http://127.0.0.1:9101"
+api_key_env = "MOCK_API_KEY"
+
+[targets.classifier]
+client = "mock"
+model = "laya-sidecar"
+
+[targets.strong]
+client = "mock"
+model = "frontier-large"
+
+[targets.weak]
+client = "mock"
+model = "small-cheap"
+
+[routes.default]
+id = "default"
+targets = ["classifier", "strong", "weak"]
+default_model = "default"
+
+[routes.default.algorithm]
+type = "llm_classifier"
+classifier_target = "classifier"
+strong_target = "strong"
+weak_target = "weak"
+base_threshold = 0.5
+
+[features]
+enabled = true
+url = "http://127.0.0.1:8765"
+timeout_ms = 100
+cache_entries = 512
+cache_ttl_secs = 300
+guard_enabled = true
+jailbreak_threshold = 0.85
+prompt_injection_threshold = 0.85
