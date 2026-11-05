@@ -51,6 +51,8 @@ mod tests {
             client: "test-client".to_string(),
             model: format!("{}-model", name),
             extra_body: None,
+            price_input: None,
+            price_output: None,
         }
     }
 

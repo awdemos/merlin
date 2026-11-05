@@ -44,6 +44,8 @@ mod tests {
                 client: client_name.to_string(),
                 model: "mock-model".to_string(),
                 extra_body: None,
+                price_input: None,
+                price_output: None,
             },
         );
         config.targets.insert(
@@ -53,6 +55,8 @@ mod tests {
                 client: client_name.to_string(),
                 model: "fallback-model".to_string(),
                 extra_body: None,
+                price_input: None,
+                price_output: None,
             },
         );
         config.routes.insert(
@@ -198,6 +202,8 @@ mod tests {
                 client: "openai".to_string(),
                 model: "primary-model".to_string(),
                 extra_body: None,
+                price_input: None,
+                price_output: None,
             },
         );
         config.targets.insert(
@@ -207,6 +213,8 @@ mod tests {
                 client: "openai".to_string(),
                 model: "fallback-model".to_string(),
                 extra_body: None,
+                price_input: None,
+                price_output: None,
             },
         );
         // Fallback target uses different client pointing to fallback server.
@@ -280,6 +288,8 @@ mod tests {
                     client: "openai".to_string(),
                     model: format!("{}-model", name),
                     extra_body: None,
+                    price_input: None,
+                    price_output: None,
                 },
             );
         }
@@ -409,6 +419,8 @@ mod tests {
                     client: "openai".to_string(),
                     model: format!("{}-model", name),
                     extra_body: None,
+                    price_input: None,
+                    price_output: None,
                 },
             );
         }

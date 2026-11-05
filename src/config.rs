@@ -5,12 +5,15 @@ use std::str::FromStr;
 /// Top-level deployment configuration.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MerlinConfig {
+    #[serde(default)]
     pub server: ServerConfig,
     pub clients: HashMap<String, ClientConfig>,
     pub targets: HashMap<String, TargetConfig>,
     pub routes: HashMap<String, RouteConfig>,
     #[serde(default)]
     pub features: FeaturesConfig,
+    #[serde(default)]
+    pub governance: GovernanceConfig,
 }
 
 /// Feature-extraction sidecar (`laya`) integration.
@@ -38,6 +41,29 @@ impl Default for FeaturesConfig {
             guard_enabled: false,
             jailbreak_threshold: 0.85,
             prompt_injection_threshold: 0.85,
+        }
+    }
+}
+
+/// Governance (policy gate, app tokens, quotas) configuration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GovernanceConfig {
+    pub enabled: bool,
+    /// Redis URL for the app/token/usage store. Falls back to
+    /// `MERLIN_REDIS_URL`, then `redis://127.0.0.1:6379`.
+    pub redis_url: Option<String>,
+    /// Sidecar `is_sensitive` probability at or above which a request
+    /// counts as sensitive.
+    pub sensitivity_threshold: f64,
+}
+
+impl Default for GovernanceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            redis_url: None,
+            sensitivity_threshold: 0.7,
         }
     }
 }
@@ -98,6 +124,12 @@ pub struct TargetConfig {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_body: Option<crate::protocol::tools::ExtraBody>,
+    /// USD per 1M input tokens; backs daily-spend accounting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_input: Option<f64>,
+    /// USD per 1M output tokens; backs daily-spend accounting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_output: Option<f64>,
 }
 
 impl TargetConfig {
@@ -177,6 +209,14 @@ impl MerlinConfig {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.governance.sensitivity_threshold.is_finite()
+            || !(0.0..=1.0).contains(&self.governance.sensitivity_threshold)
+        {
+            anyhow::bail!(
+                "governance.sensitivity_threshold must be finite and within 0.0..=1.0, got {}",
+                self.governance.sensitivity_threshold
+            );
+        }
         for (name, target) in &self.targets {
             if !self.clients.contains_key(&target.client) {
                 anyhow::bail!(
@@ -228,5 +268,64 @@ impl AlgorithmConfig {
                 v
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn governance_config_defaults_when_absent() {
+        let config: MerlinConfig =
+            toml::from_str("[clients]\n[targets]\n[routes]\n").expect("parse empty config");
+        assert!(!config.governance.enabled);
+        assert_eq!(config.governance.sensitivity_threshold, 0.7);
+        assert!(config.governance.redis_url.is_none());
+    }
+
+    #[test]
+    fn governance_config_parses_overrides() {
+        let config: MerlinConfig = toml::from_str(
+            "[clients]\n[targets]\n[routes]\n[governance]\nenabled = true\nsensitivity_threshold = 0.5\nredis_url = \"redis://10.0.0.1:6379\"\n",
+        )
+        .expect("parse governance config");
+        assert!(config.governance.enabled);
+        assert_eq!(config.governance.sensitivity_threshold, 0.5);
+        assert_eq!(
+            config.governance.redis_url.as_deref(),
+            Some("redis://10.0.0.1:6379")
+        );
+    }
+
+    #[test]
+    fn governance_threshold_out_of_range_fails_validation() {
+        let mut config: MerlinConfig = toml::from_str(
+            "[clients]\n[targets]\n[routes]\n[governance]\nenabled = true\nsensitivity_threshold = 1.5\n",
+        )
+        .expect("parses");
+        assert!(config.validate().is_err());
+        config.governance.sensitivity_threshold = f64::NAN;
+        assert!(config.validate().is_err());
+        config.governance.sensitivity_threshold = 0.7;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn target_pricing_defaults_to_none() {
+        let target: TargetConfig =
+            toml::from_str("client = \"openai\"\nmodel = \"gpt-4\"\n").unwrap();
+        assert!(target.price_input.is_none());
+        assert!(target.price_output.is_none());
+    }
+
+    #[test]
+    fn target_pricing_parses() {
+        let target: TargetConfig = toml::from_str(
+            "client = \"openai\"\nmodel = \"gpt-4\"\nprice_input = 30.0\nprice_output = 60.0\n",
+        )
+        .unwrap();
+        assert_eq!(target.price_input, Some(30.0));
+        assert_eq!(target.price_output, Some(60.0));
     }
 }
