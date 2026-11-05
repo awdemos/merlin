@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -15,8 +15,11 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::MerlinConfig;
+use crate::config::{GovernanceConfig, MerlinConfig};
 use crate::engine::RouterEngine;
+use crate::governance::apps::{hash_token, App, Store};
+use crate::governance::detect::{Detector, ScanVerdict};
+use crate::governance::gate::{self, Sensitivity, TargetScope};
 use crate::protocol::{
     AggLlmResponse, ContentBlock, LlmResponse, LlmResponseChunk, LlmResponseStreamEvent, Request,
 };
@@ -27,6 +30,15 @@ pub type AppState = Arc<RouterEngine>;
 #[derive(Clone)]
 pub struct ServerState {
     engine: AppState,
+    governance: Option<Governance>,
+}
+
+/// Governance runtime: config, token/usage store, sensitivity detector.
+#[derive(Clone)]
+pub struct Governance {
+    pub config: GovernanceConfig,
+    pub store: Arc<dyn Store>,
+    pub detector: Detector,
 }
 
 pub async fn serve(addr: SocketAddr, config_path: Option<&str>) -> anyhow::Result<()> {
@@ -35,9 +47,43 @@ pub async fn serve(addr: SocketAddr, config_path: Option<&str>) -> anyhow::Resul
     } else {
         MerlinConfig::default()
     };
-    let engine = Arc::new(RouterEngine::new(config)?);
+    let engine = Arc::new(RouterEngine::new(config.clone())?);
 
-    let app = create_app(engine);
+    let governance = if config.governance.enabled {
+        let url = config
+            .governance
+            .redis_url
+            .clone()
+            .or_else(|| std::env::var("MERLIN_REDIS_URL").ok())
+            .unwrap_or_else(|| "redis://127.0.0.1:6379".to_string());
+        match crate::governance::apps::RedisStore::connect(&url).await {
+            Ok(store) => Some(Governance {
+                config: config.governance.clone(),
+                store: Arc::new(store),
+                detector: Detector::new(),
+            }),
+            Err(e) => {
+                tracing::warn!(
+                    "governance enabled but redis at {} unreachable ({}); \
+                     governed requests will fail closed with 503",
+                    url,
+                    e
+                );
+                // Fail closed: keep governance enabled with a store that
+                // errors on every op, so anonymous requests still get 401
+                // and token-present requests get 503 store_error.
+                Some(Governance {
+                    config: config.governance.clone(),
+                    store: Arc::new(crate::governance::apps::UnavailableStore),
+                    detector: Detector::new(),
+                })
+            }
+        }
+    } else {
+        None
+    };
+
+    let app = create_app_inner(engine, governance);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
@@ -47,7 +93,15 @@ pub async fn serve(addr: SocketAddr, config_path: Option<&str>) -> anyhow::Resul
 }
 
 pub fn create_app(engine: AppState) -> Router {
-    let state = ServerState { engine };
+    create_app_inner(engine, None)
+}
+
+pub fn create_app_with_governance(engine: AppState, governance: Governance) -> Router {
+    create_app_inner(engine, Some(governance))
+}
+
+fn create_app_inner(engine: AppState, governance: Option<Governance>) -> Router {
+    let state = ServerState { engine, governance };
 
     let cors = CorsLayer::new()
         .allow_methods(Any)
@@ -109,9 +163,336 @@ async fn prometheus_metrics(State(state): State<ServerState>) -> Response {
     }
 }
 
+/// Outcome of the governance pipeline for one request.
+#[derive(Debug, Clone)]
+struct GovContext {
+    app: App,
+    sensitivity: Sensitivity,
+    sensitivity_source: &'static str,
+    eligible: Vec<String>,
+}
+
+/// Per-call gate trace attached to responses as `merlin_trace`.
+fn trace_json(ctx: &GovContext, selected: Option<&str>) -> serde_json::Value {
+    json!({
+        "app": ctx.app.id,
+        "sensitivity": match ctx.sensitivity {
+            Sensitivity::Clean => "clean",
+            Sensitivity::Sensitive => "sensitive",
+            Sensitivity::Undetermined => "undetermined",
+        },
+        "sensitivity_source": ctx.sensitivity_source,
+        "eligible": ctx.eligible,
+        "selected": selected,
+    })
+}
+
+fn denial_response(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    conflicts: Vec<String>,
+) -> Response {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            json!({
+                "error": {
+                    "message": message,
+                    "type": "merlin_error",
+                    "code": code,
+                    "conflicts": conflicts,
+                }
+            })
+            .to_string(),
+        ))
+        .unwrap_or_default()
+}
+
+/// Run authn + quotas + gate for one request. Returns `Ok(None)` when
+/// governance is disabled (anonymous, ungoverned). Returns `Err(response)`
+/// when the request is denied — the handler must return it verbatim.
+#[allow(clippy::result_large_err)]
+async fn govern_request(
+    state: &ServerState,
+    headers: &HeaderMap,
+    route_name: &str,
+    prompt: &str,
+) -> Result<Option<GovContext>, Response> {
+    let gov = match &state.governance {
+        Some(g) if g.config.enabled => g,
+        _ => return Ok(None),
+    };
+
+    // 1. Authenticate.
+    let raw_token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let raw_token = match raw_token {
+        Some(t) => t,
+        None => {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("unauthorized");
+            return Err(denial_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing bearer token",
+                Vec::new(),
+            ));
+        }
+    };
+    let hash = hash_token(raw_token);
+    let (app_id, _token_id) = gov
+        .store
+        .app_for_token(&hash)
+        .await
+        .map_err(|e| {
+            tracing::error!("token lookup failed: {e}");
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("store_error");
+            denial_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "store_error",
+                "governance store unavailable",
+                Vec::new(),
+            )
+        })?
+        .ok_or_else(|| {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("unauthorized");
+            denial_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "unknown or revoked token",
+                Vec::new(),
+            )
+        })?;
+    let app = gov.store.get_app(&app_id).await.map_err(|e| {
+        tracing::error!("app lookup failed: {e}");
+        state
+            .engine
+            .metrics()
+            .record_governance_denial("store_error");
+        denial_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "store_error",
+            "governance store unavailable",
+            Vec::new(),
+        )
+    })?;
+    let app = match app {
+        Some(app) => app,
+        None => {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("unauthorized");
+            return Err(denial_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "token references unknown app",
+                Vec::new(),
+            ));
+        }
+    };
+
+    // Route allowlist.
+    if let Some(allowed) = &app.policy.allowed_routes {
+        if !allowed.iter().any(|r| r == route_name) {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("policy_denied");
+            return Err(denial_response(
+                StatusCode::FORBIDDEN,
+                "policy_denied",
+                &format!("route '{route_name}' not allowed for app '{}'", app.id),
+                vec![format!("route '{route_name}' not in allowed_routes")],
+            ));
+        }
+    }
+
+    // 2. Quotas.
+    if let Some(max_rpm) = app.policy.max_rpm {
+        // RPM is consumed before the gate so denied requests still count
+        // against the app's budget (abuse protection).
+        let minute = chrono::Utc::now().timestamp() / 60;
+        let count = gov.store.incr_rpm(&app.id, minute).await.map_err(|e| {
+            tracing::error!("rpm counter failed: {e}");
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("store_error");
+            denial_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "store_error",
+                "governance store unavailable",
+                Vec::new(),
+            )
+        })?;
+        if count > max_rpm as u64 {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("rate_exceeded");
+            return Err(denial_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_exceeded",
+                "per-app request rate exceeded",
+                Vec::new(),
+            ));
+        }
+    }
+    if let Some(cap) = app.policy.max_spend_usd_per_day {
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let spent = gov.store.spend(&app.id, &day).await.map_err(|e| {
+            tracing::error!("spend lookup failed: {e}");
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("store_error");
+            denial_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "store_error",
+                "governance store unavailable",
+                Vec::new(),
+            )
+        })?;
+        if spent >= cap {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("budget_exhausted");
+            return Err(denial_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "budget_exhausted",
+                "per-app daily spend cap reached",
+                Vec::new(),
+            ));
+        }
+    }
+
+    // 3. Sensitivity: sidecar first, local detector fallback.
+    let (sensitivity, source) = match state.engine.prompt_features(prompt).await {
+        Some(features) => {
+            if features.is_sensitive >= gov.config.sensitivity_threshold {
+                (Sensitivity::Sensitive, "sidecar")
+            } else {
+                (Sensitivity::Clean, "sidecar")
+            }
+        }
+        None => match gov.detector.scan(prompt) {
+            ScanVerdict::Sensitive => (Sensitivity::Sensitive, "local"),
+            ScanVerdict::Clean => (Sensitivity::Clean, "local_degraded"),
+            ScanVerdict::Undetermined => (Sensitivity::Undetermined, "undetermined"),
+        },
+    };
+
+    // 4. Gate.
+    let scope: Vec<TargetScope> = state
+        .engine
+        .route_scope(route_name)
+        .into_iter()
+        .map(|name| TargetScope {
+            local: state.engine.target_locality(&name),
+            name,
+        })
+        .collect();
+    let eligible = match gate::evaluate(&app.policy, sensitivity, &scope) {
+        Ok(eligible) => eligible,
+        Err(denial) => {
+            state
+                .engine
+                .metrics()
+                .record_governance_denial("policy_denied");
+            return Err(denial_response(
+                StatusCode::FORBIDDEN,
+                "policy_denied",
+                "no eligible targets under app policy",
+                denial.conflicts,
+            ));
+        }
+    };
+
+    Ok(Some(GovContext {
+        app,
+        sensitivity,
+        sensitivity_source: source,
+        eligible,
+    }))
+}
+
+/// Charge a completed call against the app's daily budget.
+async fn charge_spend(state: &ServerState, ctx: Option<&GovContext>, agg: &AggLlmResponse) {
+    let (Some(ctx), Some(target_name)) = (ctx, agg.preservation.selected_target.as_ref()) else {
+        return;
+    };
+    // Only track spend when a cap is configured; unpriced targets and
+    // uncapped apps skip the store write entirely.
+    if ctx.app.policy.max_spend_usd_per_day.is_none() {
+        return;
+    }
+    let Some((price_in, price_out)) = state.engine.target_price(target_name) else {
+        return;
+    };
+    let Some(gov) = state.governance.as_ref() else {
+        return;
+    };
+    let cost = (agg.usage.prompt_tokens as f64) * price_in / 1_000_000.0
+        + (agg.usage.completion_tokens as f64) * price_out / 1_000_000.0;
+    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    if let Err(e) = gov.store.add_spend(&ctx.app.id, &day, cost).await {
+        tracing::warn!("failed to charge spend for app {}: {e}", ctx.app.id);
+    }
+}
+
+/// Charge spend and attach the governance trace to an aggregate response.
+async fn aggregate_response(
+    state: &ServerState,
+    gov: Option<&GovContext>,
+    agg: &AggLlmResponse,
+    encode: impl Fn(&AggLlmResponse) -> serde_json::Value,
+) -> Response {
+    charge_spend(state, gov, agg).await;
+    let mut value = encode(agg);
+    if let Some(g) = gov {
+        value.as_object_mut().expect("object").insert(
+            "merlin_trace".to_string(),
+            trace_json(g, agg.preservation.selected_target.as_deref()),
+        );
+    }
+    Json(value).into_response()
+}
+
+/// Map a governed-execution failure: engine-level policy denials get the
+/// 403 denial contract (and a metric); anything else is a generic error.
+fn governed_error_response(state: &ServerState, status: StatusCode, e: &anyhow::Error) -> Response {
+    if let Some(ge) = e.downcast_ref::<crate::engine::GovernanceError>() {
+        state
+            .engine
+            .metrics()
+            .record_governance_denial("policy_denied");
+        return denial_response(
+            StatusCode::FORBIDDEN,
+            "policy_denied",
+            &ge.message,
+            vec![ge.message.clone()],
+        );
+    }
+    error_response(status, &e.to_string())
+}
+
 async fn openai_chat_completions(
     State(state): State<ServerState>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let codec = crate::translation::openai::OpenAiChatCodec;
@@ -130,27 +511,43 @@ async fn openai_chat_completions(
         &state.engine,
         request.llm_request.model.as_deref().unwrap_or(""),
     );
+    let prompt = request.llm_request.prompt_text();
+    let gov = match govern_request(&state, &headers, &route_name, &prompt).await {
+        Ok(g) => g,
+        Err(response) => return response,
+    };
+    let eligible = gov.as_ref().map(|g| g.eligible.clone());
 
     let stream = request.llm_request.stream;
-    match state.engine.execute(&route_name, request).await {
-        Ok(LlmResponse::Aggregate(agg)) => Json(openai_aggregate_response(&agg)).into_response(),
+    match state
+        .engine
+        .execute_governed(&route_name, request, eligible.as_deref())
+        .await
+    {
+        Ok(LlmResponse::Aggregate(agg)) => {
+            aggregate_response(&state, gov.as_ref(), &agg, openai_aggregate_response).await
+        }
         Ok(LlmResponse::Stream(s)) => {
             if stream {
+                // v1: SSE passthrough is not spend-accounted (documented limitation).
                 sse_stream(s, &codec).into_response()
             } else {
                 match crate::engine::aggregate_stream(s).await {
-                    Ok(agg) => Json(openai_aggregate_response(&agg)).into_response(),
+                    Ok(agg) => {
+                        aggregate_response(&state, gov.as_ref(), &agg, openai_aggregate_response)
+                            .await
+                    }
                     Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
                 }
             }
         }
-        Err(e) => error_response(StatusCode::BAD_GATEWAY, &e.to_string()),
+        Err(e) => governed_error_response(&state, StatusCode::BAD_GATEWAY, &e),
     }
 }
 
 async fn anthropic_messages(
     State(state): State<ServerState>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let codec = crate::translation::anthropic::AnthropicMessagesCodec;
@@ -169,27 +566,43 @@ async fn anthropic_messages(
         &state.engine,
         request.llm_request.model.as_deref().unwrap_or(""),
     );
-    let stream = request.llm_request.stream;
+    let prompt = request.llm_request.prompt_text();
+    let gov = match govern_request(&state, &headers, &route_name, &prompt).await {
+        Ok(g) => g,
+        Err(response) => return response,
+    };
+    let eligible = gov.as_ref().map(|g| g.eligible.clone());
 
-    match state.engine.execute(&route_name, request).await {
-        Ok(LlmResponse::Aggregate(agg)) => Json(anthropic_aggregate_response(&agg)).into_response(),
+    let stream = request.llm_request.stream;
+    match state
+        .engine
+        .execute_governed(&route_name, request, eligible.as_deref())
+        .await
+    {
+        Ok(LlmResponse::Aggregate(agg)) => {
+            aggregate_response(&state, gov.as_ref(), &agg, anthropic_aggregate_response).await
+        }
         Ok(LlmResponse::Stream(s)) => {
             if stream {
+                // v1: SSE passthrough is not spend-accounted (documented limitation).
                 sse_stream(s, &codec).into_response()
             } else {
                 match crate::engine::aggregate_stream(s).await {
-                    Ok(agg) => Json(anthropic_aggregate_response(&agg)).into_response(),
+                    Ok(agg) => {
+                        aggregate_response(&state, gov.as_ref(), &agg, anthropic_aggregate_response)
+                            .await
+                    }
                     Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
                 }
             }
         }
-        Err(e) => error_response(StatusCode::BAD_GATEWAY, &e.to_string()),
+        Err(e) => governed_error_response(&state, StatusCode::BAD_GATEWAY, &e),
     }
 }
 
 async fn decision_only(
     State(state): State<ServerState>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let codec = crate::translation::openai::OpenAiChatCodec;
@@ -207,15 +620,34 @@ async fn decision_only(
         &state.engine,
         request.llm_request.model.as_deref().unwrap_or(""),
     );
-    match state.engine.decide(&route_name, request).await {
-        Ok(outcome) => Json(json!({
-            "selected": outcome.target.name,
-            "client": outcome.target.client,
-            "model": outcome.target.model_id,
-            "fallbacks": outcome.fallback_chain,
-        }))
-        .into_response(),
-        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    let prompt = request.llm_request.prompt_text();
+    let gov = match govern_request(&state, &headers, &route_name, &prompt).await {
+        Ok(g) => g,
+        Err(response) => return response,
+    };
+    let eligible = gov.as_ref().map(|g| g.eligible.clone());
+
+    match state
+        .engine
+        .decide_governed(&route_name, request, eligible.as_deref())
+        .await
+    {
+        Ok(outcome) => {
+            let mut value = json!({
+                "selected": outcome.target.name,
+                "client": outcome.target.client,
+                "model": outcome.target.model_id,
+                "fallbacks": outcome.fallback_chain,
+            });
+            if let Some(g) = &gov {
+                value.as_object_mut().expect("object").insert(
+                    "merlin_trace".to_string(),
+                    trace_json(g, Some(&outcome.target.name)),
+                );
+            }
+            Json(value).into_response()
+        }
+        Err(e) => governed_error_response(&state, StatusCode::BAD_REQUEST, &e),
     }
 }
 

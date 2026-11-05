@@ -33,7 +33,8 @@ pub struct AppPolicy {
     pub locality: LocalityPolicy,
     /// Requests per minute; `None` = unlimited.
     pub max_rpm: Option<u32>,
-    /// Daily spend cap in USD; `None` = unlimited.
+    /// Daily spend cap in USD; `None` = unlimited. Charged on aggregate
+    /// responses; streamed responses are not accounted (v1).
     pub max_spend_usd_per_day: Option<f64>,
     /// Raise-only: sensitive requests are restricted to local targets.
     pub sensitive_local_only: bool,
@@ -108,6 +109,59 @@ pub trait Store: Send + Sync {
     async fn spend(&self, app_id: &str, day: &str) -> Result<f64, StoreError>;
     /// Add to today's spend; returns the new total.
     async fn add_spend(&self, app_id: &str, day: &str, amount: f64) -> Result<f64, StoreError>;
+}
+
+/// Store used when governance is enabled but the backend is unreachable.
+/// Every operation fails, so governed requests fail closed (503) and
+/// token-present auth never silently passes.
+pub struct UnavailableStore;
+
+#[async_trait]
+impl Store for UnavailableStore {
+    async fn put_app(&self, _app: &App) -> Result<(), StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn get_app(&self, _id: &str) -> Result<Option<App>, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn list_apps(&self) -> Result<Vec<App>, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn put_token(
+        &self,
+        _app_id: &str,
+        _token_id: &str,
+        _hash: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn remove_token(&self, _app_id: &str, _token_id: &str) -> Result<(), StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn app_for_token(&self, _hash: &str) -> Result<Option<(String, String)>, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn token_ids(&self, _app_id: &str) -> Result<Vec<String>, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn incr_rpm(&self, _app_id: &str, _minute_epoch: i64) -> Result<u64, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn spend(&self, _app_id: &str, _day: &str) -> Result<f64, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
+
+    async fn add_spend(&self, _app_id: &str, _day: &str, _amount: f64) -> Result<f64, StoreError> {
+        Err(StoreError::Backend("governance store unavailable".into()))
+    }
 }
 
 /// In-memory store for tests and single-node deployments.

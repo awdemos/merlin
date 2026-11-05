@@ -1,6 +1,6 @@
 //! Metrics and observability using Prometheus.
 
-use prometheus::{Counter, Encoder, Histogram, Registry, TextEncoder};
+use prometheus::{Counter, CounterVec, Encoder, Histogram, Registry, TextEncoder};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -10,6 +10,7 @@ pub struct Metrics {
     errors_total: Counter,
     latency: Histogram,
     tokens_total: Counter,
+    governance_denials: CounterVec,
 }
 
 impl Metrics {
@@ -27,11 +28,19 @@ impl Metrics {
                 .buckets(prometheus::exponential_buckets(0.001, 2.0, 16).unwrap_or_default()),
         )?;
         let tokens_total = Counter::new("merlin_tokens_total", "Total tokens consumed")?;
+        let governance_denials = prometheus::CounterVec::new(
+            prometheus::opts!(
+                "merlin_governance_denials_total",
+                "Governance denials by error code"
+            ),
+            &["code"],
+        )?;
 
         registry.register(Box::new(requests_total.clone()))?;
         registry.register(Box::new(errors_total.clone()))?;
         registry.register(Box::new(latency.clone()))?;
         registry.register(Box::new(tokens_total.clone()))?;
+        registry.register(Box::new(governance_denials.clone()))?;
 
         Ok(Self {
             registry: Arc::new(registry),
@@ -39,6 +48,7 @@ impl Metrics {
             errors_total,
             latency,
             tokens_total,
+            governance_denials,
         })
     }
 
@@ -65,6 +75,10 @@ impl Metrics {
 
     pub fn record_fallback(&self, _route: &str, _target: &str) {
         self.errors_total.inc();
+    }
+
+    pub fn record_governance_denial(&self, code: &str) {
+        self.governance_denials.with_label_values(&[code]).inc();
     }
 
     pub fn encode(&self) -> anyhow::Result<String> {

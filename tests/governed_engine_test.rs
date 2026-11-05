@@ -152,7 +152,6 @@ async fn governed_execute_bails_when_algorithm_escapes_eligibility() {
         .await
         .unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("policy_denied"), "got: {msg}");
     assert!(msg.contains("outside eligible set"), "got: {msg}");
 }
 
@@ -214,7 +213,6 @@ async fn governed_execute_denies_when_bandit_selection_escapes_eligibility() {
         .await
         .unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("policy_denied"), "got: {msg}");
     assert!(msg.contains("outside eligible set"), "got: {msg}");
     // The cloud upstream must NOT have been called.
     let cloud_requests = cloud_mock.received_requests().await.unwrap();
@@ -283,7 +281,6 @@ async fn decide_governed_denies_escape() {
         .await
         .unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("policy_denied"), "got: {msg}");
     assert!(msg.contains("outside eligible set"), "got: {msg}");
 }
 
@@ -315,7 +312,6 @@ async fn governed_execute_denies_empty_scope() {
         .await
         .unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("policy_denied"), "got: {msg}");
     assert!(msg.contains("no eligible targets"), "got: {msg}");
 }
 

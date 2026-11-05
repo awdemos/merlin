@@ -15,6 +15,22 @@ use crate::routing::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// A policy denial from governed execution. Distinct from transient
+/// upstream errors so the server can answer with the governance denial
+/// contract (403 + conflicts) instead of a 5xx.
+#[derive(Debug, Clone)]
+pub struct GovernanceError {
+    pub message: String,
+}
+
+impl std::fmt::Display for GovernanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for GovernanceError {}
+
 #[derive(Debug)]
 pub struct RouterEngine {
     config: MerlinConfig,
@@ -204,18 +220,18 @@ impl RouterEngine {
         let duration = start.elapsed();
 
         match &result {
-            Ok(resp) => {
+            Ok((served, resp)) => {
                 self.metrics
-                    .record_request(route_name, &selected.name, true, duration);
+                    .record_request(route_name, &served.name, true, duration);
                 if let LlmResponse::Aggregate(agg) = resp {
                     self.metrics.record_tokens(
                         route_name,
-                        &selected.name,
+                        &served.name,
                         agg.usage.prompt_tokens + agg.usage.completion_tokens,
                     );
                 }
                 // Simple reward: success == 1.0.
-                route.algorithm.record_reward(&selected.name, &request, 1.0);
+                route.algorithm.record_reward(&served.name, &request, 1.0);
             }
             Err(_) => {
                 self.metrics
@@ -224,7 +240,7 @@ impl RouterEngine {
             }
         }
 
-        result
+        result.map(|(_, resp)| resp)
     }
 
     pub async fn decide(
@@ -291,7 +307,10 @@ impl RouterEngine {
             .filter_map(|t| self.config.targets.get(t).cloned())
             .collect();
         if candidates.is_empty() {
-            anyhow::bail!("policy_denied: no eligible targets in route {}", route_name);
+            return Err(GovernanceError {
+                message: format!("no eligible targets in route {route_name}"),
+            }
+            .into());
         }
         let outcome = route.algorithm.select(request, &candidates)?;
         // Fail-closed enforcement: arm-based algorithms select from their
@@ -300,10 +319,13 @@ impl RouterEngine {
         // ineligible fallbacks. A selection outside the eligible set is a
         // denial, never a dispatch.
         if !eligible_set.contains(outcome.selected.as_str()) {
-            anyhow::bail!(
-                "policy_denied: selected target '{}' outside eligible set",
-                outcome.selected
-            );
+            return Err(GovernanceError {
+                message: format!(
+                    "selected target '{}' outside eligible set",
+                    outcome.selected
+                ),
+            }
+            .into());
         }
         let fallbacks: Vec<String> = outcome
             .fallbacks
@@ -359,6 +381,12 @@ impl RouterEngine {
         }
     }
 
+    /// Sidecar features for a prompt (for the governance pipeline).
+    /// `None` when the sidecar is disabled or unreachable.
+    pub async fn prompt_features(&self, prompt: &str) -> Option<crate::features::PromptFeatures> {
+        self.features.as_ref()?.features(prompt).await
+    }
+
     fn resolve_target(&self, name: &str) -> anyhow::Result<TargetRef> {
         let target = self
             .config
@@ -385,14 +413,15 @@ impl RouterEngine {
         fallbacks: &[TargetRef],
         request: Request,
         route_name: &str,
-    ) -> anyhow::Result<LlmResponse> {
+    ) -> anyhow::Result<(TargetRef, LlmResponse)> {
         let mut last_err = None;
         for target in std::iter::once(primary).chain(fallbacks.iter()) {
             match self.dispatch_one(target, request.clone()).await {
                 Ok(mut resp) => {
-                    // Stamp preservation metadata.
-                    stamp(&mut resp, route_name, primary, fallbacks);
-                    return Ok(resp);
+                    // Stamp the preservation metadata with the target that
+                    // actually served the response (a fallback may have).
+                    stamp(&mut resp, route_name, target, fallbacks);
+                    return Ok((target.clone(), resp));
                 }
                 Err(e) => {
                     tracing::warn!("target {} failed: {}", target.name, e);
@@ -421,9 +450,9 @@ impl RouterEngine {
     }
 }
 
-fn stamp(resp: &mut LlmResponse, route_name: &str, primary: &TargetRef, fallbacks: &[TargetRef]) {
+fn stamp(resp: &mut LlmResponse, route_name: &str, serving: &TargetRef, fallbacks: &[TargetRef]) {
     let preservation = crate::protocol::PreservationMetadata {
-        selected_target: Some(primary.name.clone()),
+        selected_target: Some(serving.name.clone()),
         routing_algorithm: Some(route_name.to_string()),
         fallback_path: Some(fallbacks.iter().map(|t| t.name.clone()).collect()),
         extra: Default::default(),
