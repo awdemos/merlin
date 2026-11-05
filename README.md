@@ -248,6 +248,47 @@ Service features:
 
 ---
 
+## 🛡️ Governance Suite (per-app policy gate)
+
+Governance turns merlin into a multi-tenant policy gateway: applications
+authenticate with `mrl_live_…` tokens, per-app policies restrict which
+targets may serve them, quotas cap requests-per-minute and daily spend,
+and a fail-closed gate keeps sensitive traffic on local infrastructure.
+
+```bash
+# 1. Enable in merlin.toml
+[governance]
+enabled = true
+redis_url = "redis://127.0.0.1:6379"
+
+# 2. Create an app and issue a token (shown once)
+merlin app create --id myapp --name "My App"
+merlin app policy --id myapp --locality local_only --max-rpm 60 \
+    --max-spend-day 20 --sensitive-local-only
+merlin app token issue --id myapp
+
+# 3. Call with the token
+curl -X POST http://localhost:7777/v1/chat/completions \
+  -H "Authorization: Bearer mrl_live_…" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "default", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
+Policy enforcement order: authenticate (401) → route allowlist (403) → quotas (429) → sensitivity
+(sidecar `is_sensitive`, falling back to a built-in local detector) → eligibility gate (403 with
+self-explaining conflicts). When sensitivity cannot be determined the gate fails **closed** and
+applies the strictest policy; routing-side classification stays fail-open as before. Aggregate
+(non-streamed) responses include a `merlin_trace` object recording the decision.
+
+Notes:
+- Spend accounting charges aggregate responses; streamed (`stream: true`)
+  responses are not accounted (v1 limitation).
+- Denials are counted in `merlin_governance_denials_total{code}` and
+  include an `error.conflicts` list explaining the denial.
+- See `examples/governance.toml` for a full config.
+
+---
+
 ## 🗺️ Roadmap
 
 - [x] Multi-provider routing

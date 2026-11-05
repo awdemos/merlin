@@ -1,0 +1,40 @@
+# Governance-enabled merlin: per-app tokens, quotas, and a fail-closed
+# policy gate. Start Redis, create an app + token (see README), then call
+# /v1/chat/completions with Authorization: Bearer mrl_live_...
+
+[server]
+host = "0.0.0.0"
+port = 7777
+
+[clients.ollama]
+format = "openai_chat"
+base_url = "http://127.0.0.1:11434"
+
+[clients.local_vllm]
+format = "openai_chat"
+base_url = "http://10.0.0.5:8000/v1"
+
+[targets.local_qwen]
+client = "ollama"
+model = "qwen3"
+# USD per 1M tokens — backs daily-spend accounting for governed apps.
+price_input = 0.0
+price_output = 0.0
+
+[targets.local_vllm]
+client = "local_vllm"
+model = "qwen3-32b"
+price_input = 0.0
+price_output = 0.0
+
+[routes.default]
+id = "default"
+targets = ["local_qwen", "local_vllm"]
+[routes.default.algorithm]
+type = "thompson"
+targets = ["local_qwen", "local_vllm"]
+
+[governance]
+enabled = true
+redis_url = "redis://127.0.0.1:6379"
+sensitivity_threshold = 0.7

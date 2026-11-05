@@ -328,4 +328,16 @@ mod tests {
         assert_eq!(target.price_input, Some(30.0));
         assert_eq!(target.price_output, Some(60.0));
     }
+
+    #[test]
+    fn examples_governance_toml_parses() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/governance.toml");
+        let config = MerlinConfig::load_from_file(path.to_str().unwrap())
+            .expect("examples/governance.toml must parse");
+        assert!(config.governance.enabled);
+        assert!(config.routes.contains_key("default"));
+        assert!(config.targets.contains_key("local_qwen"));
+        assert!(config.validate().is_ok());
+    }
 }
