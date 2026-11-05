@@ -230,6 +230,221 @@ impl Store for MemoryStore {
     }
 }
 
+/// Redis-backed store. Keys:
+///
+/// ```text
+/// gvn:app:<id>                 hash    {json: <App JSON>}
+/// gvn:apps                     set     app ids (SADD by put_app/put_token; index for list_apps)
+/// gvn:app:<id>:tokens          hash    {token_id: sha256}
+/// gvn:tok:<sha256>             hash    {app: <id>, tid: <token_id>}
+/// gvn:app:<id>:rpm:<minute>    string  INCR, EXPIRE 90
+/// gvn:app:<id>:spend:<day>     string  INCRBYFLOAT, EXPIRE 172800
+/// ```
+pub struct RedisStore {
+    conn: redis::aio::ConnectionManager,
+}
+
+/// Timeout for establishing a Redis connection.
+const REDIS_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Timeout for an individual Redis command response.
+const REDIS_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl RedisStore {
+    pub async fn connect(url: &str) -> Result<Self, StoreError> {
+        let client = redis::Client::open(url)
+            .map_err(|e| StoreError::Backend(format!("bad redis url: {e}")))?;
+        // redis 0.25 has no ConnectionManagerConfig; this is the only
+        // constructor that takes timeouts. Backoff args mirror the crate's
+        // private defaults used by ConnectionManager::new.
+        let conn = redis::aio::ConnectionManager::new_with_backoff_and_timeouts(
+            client,
+            2,
+            100,
+            6,
+            REDIS_RESPONSE_TIMEOUT,
+            REDIS_CONNECT_TIMEOUT,
+        )
+        .await
+        .map_err(|e| StoreError::Backend(format!("redis connect failed: {e}")))?;
+        Ok(Self { conn })
+    }
+}
+
+#[async_trait]
+impl Store for RedisStore {
+    async fn put_app(&self, app: &App) -> Result<(), StoreError> {
+        use redis::AsyncCommands;
+        let json = serde_json::to_string(app)
+            .map_err(|e| StoreError::Backend(format!("serialize app: {e}")))?;
+        let mut conn = self.conn.clone();
+        // SADD first: crash-ordering prefers listed-but-missing over
+        // missing-but-authenticating.
+        conn.sadd::<_, _, ()>("gvn:apps", &app.id)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        conn.hset::<_, _, _, ()>(format!("gvn:app:{}", app.id), "json", json)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))
+    }
+
+    async fn get_app(&self, id: &str) -> Result<Option<App>, StoreError> {
+        use redis::AsyncCommands;
+        let json: Option<String> = self
+            .conn
+            .clone()
+            .hget(format!("gvn:app:{id}"), "json")
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        match json {
+            None => Ok(None),
+            Some(j) => serde_json::from_str(&j)
+                .map(Some)
+                .map_err(|e| StoreError::Backend(format!("deserialize app: {e}"))),
+        }
+    }
+
+    async fn list_apps(&self) -> Result<Vec<App>, StoreError> {
+        use redis::AsyncCommands;
+        let ids: Vec<String> = self
+            .conn
+            .clone()
+            .smembers("gvn:apps")
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        let mut apps = Vec::new();
+        for id in ids {
+            if let Some(app) = self.get_app(&id).await? {
+                apps.push(app);
+            }
+        }
+        Ok(apps)
+    }
+
+    /// Record a token hash under `token_id` for `app_id`. Re-issue runs as
+    /// one atomic Lua script: it evicts any old reverse-index entry before
+    /// writing the forward and reverse mappings, so a superseded token
+    /// stops authenticating immediately and concurrent re-issues cannot
+    /// leave a ghost entry — mirroring [`MemoryStore::put_token`].
+    async fn put_token(&self, app_id: &str, token_id: &str, hash: &str) -> Result<(), StoreError> {
+        use redis::AsyncCommands;
+        let mut conn = self.conn.clone();
+        conn.sadd::<_, _, ()>("gvn:apps", app_id)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        let script = redis::Script::new(
+            r#"
+            local old = redis.call('HGET', KEYS[1], ARGV[1])
+            if old and old ~= ARGV[2] then
+                redis.call('DEL', 'gvn:tok:' .. old)
+            end
+            redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+            redis.call('HSET', 'gvn:tok:' .. ARGV[2], 'app', ARGV[3], 'tid', ARGV[1])
+            return 1
+            "#,
+        );
+        script
+            .key(format!("gvn:app:{app_id}:tokens"))
+            .arg(token_id)
+            .arg(hash)
+            .arg(app_id)
+            .invoke_async::<_, i64>(&mut conn)
+            .await
+            .map(|_| ())
+            .map_err(|e| StoreError::Backend(e.to_string()))
+    }
+
+    async fn remove_token(&self, app_id: &str, token_id: &str) -> Result<(), StoreError> {
+        use redis::AsyncCommands;
+        let hash: Option<String> = self
+            .conn
+            .clone()
+            .hget(format!("gvn:app:{app_id}:tokens"), token_id)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        let mut conn = self.conn.clone();
+        conn.hdel::<_, _, ()>(format!("gvn:app:{app_id}:tokens"), token_id)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        if let Some(hash) = hash {
+            conn.del::<_, ()>(format!("gvn:tok:{hash}"))
+                .await
+                .map_err(|e| StoreError::Backend(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn app_for_token(&self, hash: &str) -> Result<Option<(String, String)>, StoreError> {
+        use redis::AsyncCommands;
+        let fields: std::collections::HashMap<String, String> = self
+            .conn
+            .clone()
+            .hgetall(format!("gvn:tok:{hash}"))
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        match (fields.get("app"), fields.get("tid")) {
+            (Some(app), Some(tid)) => Ok(Some((app.clone(), tid.clone()))),
+            _ => Ok(None),
+        }
+    }
+
+    async fn token_ids(&self, app_id: &str) -> Result<Vec<String>, StoreError> {
+        use redis::AsyncCommands;
+        self.conn
+            .clone()
+            .hkeys(format!("gvn:app:{app_id}:tokens"))
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))
+    }
+
+    async fn incr_rpm(&self, app_id: &str, minute_epoch: i64) -> Result<u64, StoreError> {
+        use redis::AsyncCommands;
+        let key = format!("gvn:app:{app_id}:rpm:{minute_epoch}");
+        let count: i64 = self
+            .conn
+            .clone()
+            .incr(&key, 1)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        if count == 1 {
+            if let Err(e) = self.conn.clone().expire::<_, i64>(&key, 90).await {
+                tracing::warn!(key = %key, error = %e, "failed to set TTL on rpm counter");
+            }
+        }
+        Ok(count as u64)
+    }
+
+    async fn spend(&self, app_id: &str, day: &str) -> Result<f64, StoreError> {
+        use redis::AsyncCommands;
+        let value: Option<String> = self
+            .conn
+            .clone()
+            .get(format!("gvn:app:{app_id}:spend:{day}"))
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        match value {
+            Some(v) => v
+                .parse::<f64>()
+                .map_err(|e| StoreError::Backend(e.to_string())),
+            None => Ok(0.0),
+        }
+    }
+
+    async fn add_spend(&self, app_id: &str, day: &str, amount: f64) -> Result<f64, StoreError> {
+        use redis::AsyncCommands;
+        let key = format!("gvn:app:{app_id}:spend:{day}");
+        let mut conn = self.conn.clone();
+        let total: f64 = conn
+            .incr(&key, amount)
+            .await
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
+        // refresh TTL; key exists post-increment
+        if let Err(e) = conn.expire::<_, i64>(&key, 172_800).await {
+            tracing::warn!(key = %key, error = %e, "failed to refresh TTL on spend counter");
+        }
+        Ok(total)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +552,75 @@ mod tests {
         assert_eq!(store.spend("myapp", "2026-11-05").await.unwrap(), 3.75);
         // A different day is a separate bucket.
         assert_eq!(store.spend("myapp", "2026-11-06").await.unwrap(), 0.0);
+    }
+
+    /// Integration test: only runs when MERLIN_TEST_REDIS_URL is set.
+    /// Start a local Redis to run it:
+    ///   docker run --rm -p 6379:6379 redis:7
+    ///   MERLIN_TEST_REDIS_URL=redis://127.0.0.1:6379 cargo test --lib governance::apps::tests::redis_store_roundtrip
+    #[tokio::test]
+    async fn redis_store_roundtrip() {
+        let url = match std::env::var("MERLIN_TEST_REDIS_URL") {
+            Ok(u) => u,
+            Err(_) => {
+                eprintln!("skipping: MERLIN_TEST_REDIS_URL not set");
+                return;
+            }
+        };
+        let store = RedisStore::connect(&url).await.unwrap();
+        let suffix = uuid::Uuid::new_v4().to_string();
+        let app_id = format!("testapp-{suffix}");
+
+        let app = App::new(&app_id, "Redis Test");
+        store.put_app(&app).await.unwrap();
+        assert!(store
+            .list_apps()
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.id == app_id));
+        assert_eq!(
+            store.get_app(&app_id).await.unwrap().unwrap().name,
+            "Redis Test"
+        );
+
+        let raw = mint_token();
+        let hash = hash_token(&raw);
+        store.put_token(&app_id, "tid-1", &hash).await.unwrap();
+        assert_eq!(
+            store.app_for_token(&hash).await.unwrap(),
+            Some((app_id.clone(), "tid-1".to_string()))
+        );
+
+        assert_eq!(store.incr_rpm(&app_id, 1000).await.unwrap(), 1);
+        assert_eq!(store.incr_rpm(&app_id, 1000).await.unwrap(), 2);
+        assert!((store.add_spend(&app_id, "2026-11-05", 1.5).await.unwrap() - 1.5).abs() < 1e-9);
+        assert!((store.spend(&app_id, "2026-11-05").await.unwrap() - 1.5).abs() < 1e-9);
+
+        // Re-issue: the old hash must stop authenticating, the new one resolves.
+        let raw2 = mint_token();
+        let hash2 = hash_token(&raw2);
+        store.put_token(&app_id, "tid-1", &hash2).await.unwrap();
+        assert!(store.app_for_token(&hash).await.unwrap().is_none());
+        assert_eq!(
+            store.app_for_token(&hash2).await.unwrap(),
+            Some((app_id.clone(), "tid-1".to_string()))
+        );
+
+        store.remove_token(&app_id, "tid-1").await.unwrap();
+        assert!(store.app_for_token(&hash2).await.unwrap().is_none());
+
+        // Cleanup so repeated runs against a shared Redis do not accumulate state.
+        use redis::AsyncCommands;
+        let mut conn = store.conn.clone();
+        for key in [
+            format!("gvn:app:{app_id}"),
+            format!("gvn:app:{app_id}:tokens"),
+            format!("gvn:app:{app_id}:rpm:1000"),
+            format!("gvn:app:{app_id}:spend:2026-11-05"),
+        ] {
+            let _: redis::RedisResult<i64> = conn.del(key).await;
+        }
+        let _: redis::RedisResult<i64> = conn.srem("gvn:apps", &app_id).await;
     }
 }
