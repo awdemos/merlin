@@ -1,1 +1,341 @@
-//! App identity, policy, and token storage. (Filled in Task 3.)
+//! App identity, policy, and token storage for the governance suite.
+//!
+//! Tokens are random 256-bit secrets presented to callers exactly once
+//! at issue; only the SHA-256 hash is stored, so a store dump yields no
+//! usable credentials. Usage counters (per-minute RPM, per-day spend)
+//! live in the same store behind the [`Store`] trait.
+
+use async_trait::async_trait;
+use base64::Engine;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use sha2::Digest;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+
+/// Whether an app's traffic may leave local infrastructure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalityPolicy {
+    #[default]
+    Any,
+    LocalOnly,
+}
+
+/// Per-app policy enforced by the gate and quotas.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppPolicy {
+    /// Client-visible route allowlist. `None` = all routes.
+    pub allowed_routes: Option<Vec<String>>,
+    /// Upstream target allowlist. `None` = all targets.
+    pub allowed_targets: Option<Vec<String>>,
+    pub locality: LocalityPolicy,
+    /// Requests per minute; `None` = unlimited.
+    pub max_rpm: Option<u32>,
+    /// Daily spend cap in USD; `None` = unlimited.
+    pub max_spend_usd_per_day: Option<f64>,
+    /// Raise-only: sensitive requests are restricted to local targets.
+    pub sensitive_local_only: bool,
+}
+
+/// A registered calling application.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct App {
+    pub id: String,
+    pub name: String,
+    pub policy: AppPolicy,
+    pub created_at: chrono::DateTime<Utc>,
+}
+
+impl App {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            policy: AppPolicy::default(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+/// Mint a new raw API token. The caller must display it once and then
+/// store only [`hash_token`] of it.
+pub fn mint_token() -> String {
+    let mut bytes = [0u8; 32];
+    use rand::RngCore;
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!(
+        "mrl_live_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    )
+}
+
+/// SHA-256 of the raw token, hex-encoded. This is what gets stored.
+pub fn hash_token(raw: &str) -> String {
+    let digest = sha2::Sha256::digest(raw.as_bytes());
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Errors from store operations. The server maps these to 503.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("store backend error: {0}")]
+    Backend(String),
+    #[error("app not found: {0}")]
+    NotFound(String),
+}
+
+/// Persistence for apps, tokens, and usage counters.
+#[async_trait]
+pub trait Store: Send + Sync {
+    async fn put_app(&self, app: &App) -> Result<(), StoreError>;
+    async fn get_app(&self, id: &str) -> Result<Option<App>, StoreError>;
+    async fn list_apps(&self) -> Result<Vec<App>, StoreError>;
+
+    /// Record a token hash under `token_id` for `app_id`.
+    async fn put_token(&self, app_id: &str, token_id: &str, hash: &str) -> Result<(), StoreError>;
+    /// Remove a token. Revocation deletes the lookup, so the token
+    /// stops authenticating immediately.
+    async fn remove_token(&self, app_id: &str, token_id: &str) -> Result<(), StoreError>;
+    /// Resolve a token hash to `(app_id, token_id)`.
+    async fn app_for_token(&self, hash: &str) -> Result<Option<(String, String)>, StoreError>;
+    async fn token_ids(&self, app_id: &str) -> Result<Vec<String>, StoreError>;
+
+    /// Increment the per-minute request counter; returns the new count.
+    async fn incr_rpm(&self, app_id: &str, minute_epoch: i64) -> Result<u64, StoreError>;
+    /// Current-day spend in USD.
+    async fn spend(&self, app_id: &str, day: &str) -> Result<f64, StoreError>;
+    /// Add to today's spend; returns the new total.
+    async fn add_spend(&self, app_id: &str, day: &str, amount: f64) -> Result<f64, StoreError>;
+}
+
+/// In-memory store for tests and single-node deployments.
+#[derive(Default)]
+pub struct MemoryStore {
+    inner: RwLock<Inner>,
+}
+
+#[derive(Default)]
+struct Inner {
+    apps: HashMap<String, App>,
+    /// app_id -> (token_id -> hash)
+    tokens: HashMap<String, HashMap<String, String>>,
+    /// hash -> (app_id, token_id)
+    token_index: HashMap<String, (String, String)>,
+    /// (app_id, minute_epoch) -> count
+    rpm: HashMap<(String, i64), u64>,
+    /// (app_id, day) -> spend
+    spend: HashMap<(String, String), f64>,
+}
+
+impl MemoryStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl Store for MemoryStore {
+    async fn put_app(&self, app: &App) -> Result<(), StoreError> {
+        self.inner
+            .write()
+            .await
+            .apps
+            .insert(app.id.clone(), app.clone());
+        Ok(())
+    }
+
+    async fn get_app(&self, id: &str) -> Result<Option<App>, StoreError> {
+        Ok(self.inner.read().await.apps.get(id).cloned())
+    }
+
+    async fn list_apps(&self) -> Result<Vec<App>, StoreError> {
+        Ok(self.inner.read().await.apps.values().cloned().collect())
+    }
+
+    async fn put_token(&self, app_id: &str, token_id: &str, hash: &str) -> Result<(), StoreError> {
+        let mut inner = self.inner.write().await;
+        if let Some(old_hash) = inner.tokens.get(app_id).and_then(|m| m.get(token_id)) {
+            let old_hash = old_hash.clone();
+            inner.token_index.remove(&old_hash);
+        }
+        inner
+            .tokens
+            .entry(app_id.to_string())
+            .or_default()
+            .insert(token_id.to_string(), hash.to_string());
+        inner
+            .token_index
+            .insert(hash.to_string(), (app_id.to_string(), token_id.to_string()));
+        Ok(())
+    }
+
+    async fn remove_token(&self, app_id: &str, token_id: &str) -> Result<(), StoreError> {
+        let mut inner = self.inner.write().await;
+        if let Some(hash) = inner
+            .tokens
+            .get_mut(app_id)
+            .and_then(|tokens| tokens.remove(token_id))
+        {
+            inner.token_index.remove(&hash);
+        }
+        Ok(())
+    }
+
+    async fn app_for_token(&self, hash: &str) -> Result<Option<(String, String)>, StoreError> {
+        Ok(self.inner.read().await.token_index.get(hash).cloned())
+    }
+
+    async fn token_ids(&self, app_id: &str) -> Result<Vec<String>, StoreError> {
+        Ok(self
+            .inner
+            .read()
+            .await
+            .tokens
+            .get(app_id)
+            .map(|tokens| tokens.keys().cloned().collect())
+            .unwrap_or_default())
+    }
+
+    async fn incr_rpm(&self, app_id: &str, minute_epoch: i64) -> Result<u64, StoreError> {
+        let mut inner = self.inner.write().await;
+        let count = inner
+            .rpm
+            .entry((app_id.to_string(), minute_epoch))
+            .or_insert(0);
+        *count += 1;
+        Ok(*count)
+    }
+
+    async fn spend(&self, app_id: &str, day: &str) -> Result<f64, StoreError> {
+        Ok(self
+            .inner
+            .read()
+            .await
+            .spend
+            .get(&(app_id.to_string(), day.to_string()))
+            .copied()
+            .unwrap_or(0.0))
+    }
+
+    async fn add_spend(&self, app_id: &str, day: &str, amount: f64) -> Result<f64, StoreError> {
+        let mut inner = self.inner.write().await;
+        let total = inner
+            .spend
+            .entry((app_id.to_string(), day.to_string()))
+            .or_insert(0.0);
+        *total += amount;
+        Ok(*total)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_get_list_app() {
+        let store = MemoryStore::new();
+        let app = App::new("myapp", "My App");
+        store.put_app(&app).await.unwrap();
+        let fetched = store.get_app("myapp").await.unwrap().expect("app exists");
+        assert_eq!(fetched.name, "My App");
+        assert_eq!(fetched.policy, AppPolicy::default());
+        assert_eq!(store.list_apps().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn minted_token_authenticates_then_revoke_denies() {
+        let store = MemoryStore::new();
+        let app = App::new("myapp", "My App");
+        store.put_app(&app).await.unwrap();
+
+        let raw = mint_token();
+        let hash = hash_token(&raw);
+        let token_id = "tid-1".to_string();
+        store.put_token("myapp", &token_id, &hash).await.unwrap();
+
+        let (app_id, stored_tid) = store
+            .app_for_token(&hash)
+            .await
+            .unwrap()
+            .expect("token resolves");
+        assert_eq!(app_id, "myapp");
+        assert_eq!(stored_tid, token_id);
+        assert_eq!(store.token_ids("myapp").await.unwrap(), vec!["tid-1"]);
+
+        store.remove_token("myapp", &token_id).await.unwrap();
+        assert!(store.app_for_token(&hash).await.unwrap().is_none());
+        assert!(store.token_ids("myapp").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reissue_invalidates_old_hash_and_revokes_both() {
+        let store = MemoryStore::new();
+        let app = App::new("myapp", "My App");
+        store.put_app(&app).await.unwrap();
+
+        let raw1 = mint_token();
+        let hash1 = hash_token(&raw1);
+        store.put_token("myapp", "tid-1", &hash1).await.unwrap();
+
+        let raw2 = mint_token();
+        let hash2 = hash_token(&raw2);
+        store.put_token("myapp", "tid-1", &hash2).await.unwrap();
+
+        // Old hash no longer authenticates.
+        assert!(store.app_for_token(&hash1).await.unwrap().is_none());
+        assert_eq!(
+            store.app_for_token(&hash2).await.unwrap(),
+            Some(("myapp".to_string(), "tid-1".to_string()))
+        );
+
+        // Revoking the token id kills the current hash too.
+        store.remove_token("myapp", "tid-1").await.unwrap();
+        assert!(store.app_for_token(&hash2).await.unwrap().is_none());
+        assert!(store.app_for_token(&hash1).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn minted_tokens_are_unique_and_prefixed() {
+        let a = mint_token();
+        let b = mint_token();
+        assert_ne!(a, b);
+        assert!(a.starts_with("mrl_live_"));
+        assert!(a.len() > "mrl_live_".len() + 30);
+    }
+
+    #[test]
+    fn hash_is_sha256_hex_of_raw_token() {
+        let raw = mint_token();
+        let hash = hash_token(&raw);
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn rpm_counter_increments_and_resets_per_window() {
+        let store = MemoryStore::new();
+        assert_eq!(store.incr_rpm("myapp", 1000).await.unwrap(), 1);
+        assert_eq!(store.incr_rpm("myapp", 1000).await.unwrap(), 2);
+        // A different minute window starts over.
+        assert_eq!(store.incr_rpm("myapp", 1001).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn spend_accumulates_per_day() {
+        let store = MemoryStore::new();
+        assert_eq!(
+            store.add_spend("myapp", "2026-11-05", 1.5).await.unwrap(),
+            1.5
+        );
+        assert_eq!(
+            store.add_spend("myapp", "2026-11-05", 2.25).await.unwrap(),
+            3.75
+        );
+        assert_eq!(store.spend("myapp", "2026-11-05").await.unwrap(), 3.75);
+        // A different day is a separate bucket.
+        assert_eq!(store.spend("myapp", "2026-11-06").await.unwrap(), 0.0);
+    }
+}

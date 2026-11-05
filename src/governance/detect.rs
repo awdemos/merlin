@@ -71,7 +71,7 @@ impl Detector {
     }
 }
 
-/// Shannon entropy (bits per character) of a token over its byte alphabet.
+/// Shannon entropy (bits per byte) of a token over its byte alphabet.
 fn shannon_entropy(token: &str) -> f64 {
     let mut counts = [0usize; 256];
     let bytes = token.as_bytes();
@@ -90,9 +90,8 @@ fn shannon_entropy(token: &str) -> f64 {
 }
 
 fn has_high_entropy_token(text: &str) -> bool {
-    text.split_whitespace().any(|token| {
-        token.len() >= ENTROPY_MIN_LEN && shannon_entropy(token) >= ENTROPY_THRESHOLD
-    })
+    text.split_whitespace()
+        .any(|token| token.len() >= ENTROPY_MIN_LEN && shannon_entropy(token) >= ENTROPY_THRESHOLD)
 }
 
 #[cfg(test)]
