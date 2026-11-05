@@ -2,6 +2,7 @@ pub mod clients;
 pub mod config;
 pub mod engine;
 pub mod features;
+pub mod governance;
 pub mod metrics;
 pub mod protocol;
 pub mod quantum;
