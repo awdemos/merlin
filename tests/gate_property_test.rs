@@ -8,12 +8,18 @@ use merlin::governance::gate::{evaluate, host_is_local, Sensitivity, TargetScope
 use proptest::prelude::*;
 
 fn scope_strategy() -> impl Strategy<Value = Vec<TargetScope>> {
-    proptest::collection::vec(("[a-z]{1,8}", any::<bool>()), 0..6).prop_map(|items| {
-        items
-            .into_iter()
-            .map(|(name, local)| TargetScope { name, local })
-            .collect()
-    })
+    proptest::collection::vec(("[a-z]{1,8}", any::<bool>(), any::<bool>()), 0..6).prop_map(
+        |items| {
+            items
+                .into_iter()
+                .map(|(name, local, priced)| TargetScope {
+                    name,
+                    local,
+                    priced,
+                })
+                .collect()
+        },
+    )
 }
 
 fn policy_strategy() -> impl Strategy<Value = AppPolicy> {
@@ -68,6 +74,12 @@ proptest! {
                 if let Some(allowed) = &policy.allowed_targets {
                     prop_assert!(allowed.contains(name),
                         "target {name} not in allowed_targets");
+                }
+                if policy.max_spend_usd_per_day.is_some() {
+                    prop_assert!(
+                        scope.iter().any(|t| &t.name == name && t.priced),
+                        "eligible target {name} is unpriced under a spend cap"
+                    );
                 }
             }
         }

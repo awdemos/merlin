@@ -88,6 +88,7 @@ pub enum StoreError {
 }
 
 /// Persistence for apps, tokens, and usage counters.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Store: Send + Sync {
     async fn put_app(&self, app: &App) -> Result<(), StoreError>;
@@ -407,24 +408,28 @@ impl Store for RedisStore {
             .map_err(|e| StoreError::Backend(e.to_string()))
     }
 
+    /// Remove a token. One atomic Lua script: read the stored hash, delete
+    /// the reverse-index entry, then drop the forward entry — a crash
+    /// mid-revoke cannot leave a live reverse index for a revoked token.
     async fn remove_token(&self, app_id: &str, token_id: &str) -> Result<(), StoreError> {
-        use redis::AsyncCommands;
-        let hash: Option<String> = self
-            .conn
-            .clone()
-            .hget(format!("gvn:app:{app_id}:tokens"), token_id)
-            .await
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
         let mut conn = self.conn.clone();
-        conn.hdel::<_, _, ()>(format!("gvn:app:{app_id}:tokens"), token_id)
+        let script = redis::Script::new(
+            r#"
+            local hash = redis.call('HGET', KEYS[1], ARGV[1])
+            if hash then
+                redis.call('DEL', 'gvn:tok:' .. hash)
+            end
+            redis.call('HDEL', KEYS[1], ARGV[1])
+            return 1
+            "#,
+        );
+        script
+            .key(format!("gvn:app:{app_id}:tokens"))
+            .arg(token_id)
+            .invoke_async::<_, i64>(&mut conn)
             .await
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
-        if let Some(hash) = hash {
-            conn.del::<_, ()>(format!("gvn:tok:{hash}"))
-                .await
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
-        }
-        Ok(())
+            .map(|_| ())
+            .map_err(|e| StoreError::Backend(e.to_string()))
     }
 
     async fn app_for_token(&self, hash: &str) -> Result<Option<(String, String)>, StoreError> {

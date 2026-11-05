@@ -522,3 +522,247 @@ async fn decision_endpoint_applies_governance() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
 }
+
+/// One upstream mock returning a fixed OpenAI chat completion; returns the
+/// server so callers can assert received requests.
+async fn priced_mock() -> wiremock::MockServer {
+    let mock = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-test", "object": "chat.completion", "model": "m",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"},
+                              "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            })),
+        )
+        .mount(&mock)
+        .await;
+    mock
+}
+
+fn passthrough_config(base_url: String, price: Option<(f64, f64)>) -> MerlinConfig {
+    let mut config = MerlinConfig::default();
+    config.server.port = 0;
+    config.clients.insert(
+        "c".to_string(),
+        ClientConfig {
+            format: "openai_chat".to_string(),
+            base_url,
+            api_key_env: None,
+            max_retries: 0,
+            forward_auth: false,
+            extra_headers: Default::default(),
+            timeout_ms: 5000,
+        },
+    );
+    config.targets.insert(
+        "t".to_string(),
+        TargetConfig {
+            name: "t".to_string(),
+            client: "c".to_string(),
+            model: "m".to_string(),
+            extra_body: None,
+            price_input: price.map(|p| p.0),
+            price_output: price.map(|p| p.1),
+        },
+    );
+    config.routes.insert(
+        "default".to_string(),
+        RouteConfig {
+            id: "default".to_string(),
+            default_model: None,
+            targets: vec!["t".to_string()],
+            algorithm: AlgorithmConfig::Passthrough {
+                target: "t".to_string(),
+            },
+        },
+    );
+    config
+}
+
+fn authed_chat_request(raw: &str) -> axum::http::Request<axum::body::Body> {
+    axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {raw}"))
+        .body(axum::body::Body::from(
+            serde_json::json!({
+                "model": "default",
+                "messages": [{"role": "user", "content": "hello"}]
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn capped_app_denied_when_only_unpriced_targets() {
+    use tower::ServiceExt;
+    // A spend cap can only bind on priced targets; a route with nothing
+    // priced must deny rather than route the app unaccounted.
+    let mock = priced_mock().await;
+    let config = passthrough_config(mock.uri(), None);
+    let engine = RouterEngine::new(config).unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut app = App::new("myapp", "My App");
+    app.policy = AppPolicy {
+        max_spend_usd_per_day: Some(1.0),
+        ..Default::default()
+    };
+    store.put_app(&app).await.unwrap();
+    let raw = merlin::governance::apps::mint_token();
+    let hash = merlin::governance::apps::hash_token(&raw);
+    store.put_token("myapp", "tid-1", &hash).await.unwrap();
+    let gov = Governance {
+        config: gov_config(),
+        store: store.clone(),
+        detector: Detector::new(),
+    };
+    let router = create_app_with_governance(Arc::new(engine), gov);
+
+    let response = router.oneshot(authed_chat_request(&raw)).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(body["error"]["code"], "policy_denied");
+    let conflicts = body["error"]["conflicts"].as_array().unwrap();
+    assert!(
+        conflicts
+            .iter()
+            .any(|c| c.as_str().unwrap().contains("priced")),
+        "conflicts: {conflicts:?}"
+    );
+}
+
+#[tokio::test]
+async fn empty_prompt_fails_closed() {
+    use tower::ServiceExt;
+    // Non-text-only prompts extract to an empty string; with nothing to
+    // scan, sensitivity is Undetermined and the strictest policy applies.
+    let mut config = MerlinConfig::default();
+    config.server.port = 0;
+    config.clients.insert(
+        "cloud".to_string(),
+        ClientConfig {
+            format: "openai_chat".to_string(),
+            base_url: "https://example.com".to_string(),
+            api_key_env: None,
+            max_retries: 0,
+            forward_auth: false,
+            extra_headers: Default::default(),
+            timeout_ms: 5000,
+        },
+    );
+    config.targets.insert(
+        "cloud_t".to_string(),
+        TargetConfig {
+            name: "cloud_t".to_string(),
+            client: "cloud".to_string(),
+            model: "cloud-model".to_string(),
+            extra_body: None,
+            price_input: None,
+            price_output: None,
+        },
+    );
+    config.routes.insert(
+        "default".to_string(),
+        RouteConfig {
+            id: "default".to_string(),
+            default_model: None,
+            targets: vec!["cloud_t".to_string()],
+            algorithm: AlgorithmConfig::Passthrough {
+                target: "cloud_t".to_string(),
+            },
+        },
+    );
+    config.governance = gov_config();
+
+    let engine = RouterEngine::new(config).unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let app = App::new("myapp", "My App");
+    store.put_app(&app).await.unwrap();
+    let raw = merlin::governance::apps::mint_token();
+    let hash = merlin::governance::apps::hash_token(&raw);
+    store.put_token("myapp", "tid-1", &hash).await.unwrap();
+    let gov = Governance {
+        config: gov_config(),
+        store: store.clone(),
+        detector: Detector::new(),
+    };
+    let router = create_app_with_governance(Arc::new(engine), gov);
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {raw}"))
+        .body(axum::body::Body::from(
+            serde_json::json!({
+                "model": "default",
+                "messages": [{"role": "user", "content": ""}]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(body["error"]["code"], "policy_denied");
+    let conflicts = body["error"]["conflicts"].as_array().unwrap();
+    assert!(
+        conflicts
+            .iter()
+            .any(|c| c.as_str().unwrap().contains("undetermined")),
+        "conflicts: {conflicts:?}"
+    );
+}
+
+#[tokio::test]
+async fn spend_is_charged_per_call() {
+    use tower::ServiceExt;
+    let mock = priced_mock().await;
+    let config = passthrough_config(mock.uri(), Some((10.0, 20.0)));
+    let engine = RouterEngine::new(config).unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut app = App::new("myapp", "My App");
+    app.policy = AppPolicy {
+        max_spend_usd_per_day: Some(1.0),
+        ..Default::default()
+    };
+    store.put_app(&app).await.unwrap();
+    let raw = merlin::governance::apps::mint_token();
+    let hash = merlin::governance::apps::hash_token(&raw);
+    store.put_token("myapp", "tid-1", &hash).await.unwrap();
+    let gov = Governance {
+        config: gov_config(),
+        store: store.clone(),
+        detector: Detector::new(),
+    };
+    let router = create_app_with_governance(Arc::new(engine), gov);
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    // (10 prompt × $10 + 5 completion × $20) per 1M tokens = 0.0002/call.
+    let first = router
+        .clone()
+        .oneshot(authed_chat_request(&raw))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), axum::http::StatusCode::OK);
+    let spent = store.spend("myapp", &today).await.unwrap();
+    assert!((spent - 0.0002).abs() < 1e-9, "spent after 1 call: {spent}");
+
+    let second = router.oneshot(authed_chat_request(&raw)).await.unwrap();
+    assert_eq!(second.status(), axum::http::StatusCode::OK);
+    let spent = store.spend("myapp", &today).await.unwrap();
+    assert!(
+        (spent - 0.0004).abs() < 1e-9,
+        "spent after 2 calls: {spent}"
+    );
+}

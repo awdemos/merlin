@@ -281,6 +281,8 @@ applies the strictest policy; routing-side classification stays fail-open as bef
 (non-streamed) responses include a `merlin_trace` object recording the decision.
 
 Notes:
+- Apps with a daily spend cap can only route to targets that declare
+  `price_input`/`price_output` (fail-closed).
 - Spend accounting charges aggregate responses; streamed (`stream: true`)
   responses are not accounted (v1 limitation).
 - Denials are counted in `merlin_governance_denials_total{code}` and

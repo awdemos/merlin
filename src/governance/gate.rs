@@ -16,11 +16,13 @@ pub enum Sensitivity {
     Undetermined,
 }
 
-/// One candidate target: its name and whether it runs locally.
+/// One candidate target: its name, whether it runs locally, and whether
+/// it declares pricing (needed for spend-capped apps to charge accurately).
 #[derive(Debug, Clone)]
 pub struct TargetScope {
     pub name: String,
     pub local: bool,
+    pub priced: bool,
 }
 
 /// Why a request was denied, in terms the caller can act on. Hints never
@@ -39,7 +41,9 @@ pub struct Denial {
 /// - `Sensitive` + `sensitive_local_only` keeps only local targets
 ///   (raise-only; never applied when the request is clean);
 /// - `Undetermined` keeps only local targets regardless of policy
-///   (fail-closed).
+///   (fail-closed);
+/// - a daily spend cap keeps only priced targets, so the cap can actually
+///   bind (fail-closed; unpriced targets would bypass it).
 pub fn evaluate(
     policy: &AppPolicy,
     sensitivity: Sensitivity,
@@ -49,6 +53,7 @@ pub fn evaluate(
     let restrict_local = policy.locality == LocalityPolicy::LocalOnly
         || (sensitivity == Sensitivity::Sensitive && policy.sensitive_local_only)
         || strict_local;
+    let cap_active = policy.max_spend_usd_per_day.is_some();
 
     let eligible: Vec<String> = scope
         .iter()
@@ -60,6 +65,7 @@ pub fn evaluate(
                 .map(|allowed| allowed.iter().any(|a| a == &t.name))
                 .unwrap_or(true)
         })
+        .filter(|t| !cap_active || t.priced)
         .map(|t| t.name.clone())
         .collect();
 
@@ -87,6 +93,9 @@ pub fn evaluate(
         if scope.iter().all(|t| !allowed.contains(&t.name)) {
             conflicts.push("allowed_targets excludes every target in this route".to_string());
         }
+    }
+    if cap_active && !scope.iter().any(|t| t.priced) {
+        conflicts.push("spend cap requires priced targets, but none are available".to_string());
     }
     if conflicts.is_empty() {
         conflicts.push("no targets in scope".to_string());
@@ -139,6 +148,7 @@ mod tests {
             .map(|(n, local)| TargetScope {
                 name: n.to_string(),
                 local: *local,
+                priced: true,
             })
             .collect()
     }
@@ -270,6 +280,56 @@ mod tests {
             &scope(&[("cloud", false), ("local-b", true)]),
         );
         assert_eq!(both.unwrap(), vec!["local-b".to_string()]);
+    }
+
+    #[test]
+    fn capped_policy_excludes_unpriced_targets() {
+        let policy = AppPolicy {
+            max_spend_usd_per_day: Some(1.0),
+            ..Default::default()
+        };
+        let scope = vec![
+            TargetScope {
+                name: "priced".to_string(),
+                local: true,
+                priced: true,
+            },
+            TargetScope {
+                name: "unpriced".to_string(),
+                local: true,
+                priced: false,
+            },
+        ];
+        let result = evaluate(&policy, Sensitivity::Clean, &scope);
+        assert_eq!(result.unwrap(), vec!["priced".to_string()]);
+    }
+
+    #[test]
+    fn capped_policy_with_only_unpriced_targets_denies() {
+        let policy = AppPolicy {
+            max_spend_usd_per_day: Some(1.0),
+            ..Default::default()
+        };
+        let scope = vec![TargetScope {
+            name: "unpriced".to_string(),
+            local: true,
+            priced: false,
+        }];
+        let denial = evaluate(&policy, Sensitivity::Clean, &scope).unwrap_err();
+        assert_eq!(denial.code, "policy_denied");
+        assert!(denial.conflicts.iter().any(|c| c.contains("priced")));
+    }
+
+    #[test]
+    fn uncapped_policy_keeps_unpriced_targets() {
+        let policy = AppPolicy::default();
+        let scope = vec![TargetScope {
+            name: "unpriced".to_string(),
+            local: false,
+            priced: false,
+        }];
+        let result = evaluate(&policy, Sensitivity::Clean, &scope);
+        assert_eq!(result.unwrap(), vec!["unpriced".to_string()]);
     }
 
     #[test]

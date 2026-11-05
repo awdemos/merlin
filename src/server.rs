@@ -229,7 +229,9 @@ async fn govern_request(
     let raw_token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+        .and_then(|v| v.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, token)| token);
     let raw_token = match raw_token {
         Some(t) => t,
         None => {
@@ -380,20 +382,27 @@ async fn govern_request(
         }
     }
 
-    // 3. Sensitivity: sidecar first, local detector fallback.
-    let (sensitivity, source) = match state.engine.prompt_features(prompt).await {
-        Some(features) => {
-            if features.is_sensitive >= gov.config.sensitivity_threshold {
-                (Sensitivity::Sensitive, "sidecar")
-            } else {
-                (Sensitivity::Clean, "sidecar")
+    // 3. Sensitivity: sidecar first, local detector fallback. Non-text
+    // content (images, tool results) is not scanned; with no extractable
+    // text we cannot determine sensitivity, so fail closed.
+    let trimmed = prompt.trim();
+    let (sensitivity, source) = if trimmed.is_empty() {
+        (Sensitivity::Undetermined, "no_text")
+    } else {
+        match state.engine.prompt_features(trimmed).await {
+            Some(features) => {
+                if features.is_sensitive >= gov.config.sensitivity_threshold {
+                    (Sensitivity::Sensitive, "sidecar")
+                } else {
+                    (Sensitivity::Clean, "sidecar")
+                }
             }
+            None => match gov.detector.scan(trimmed) {
+                ScanVerdict::Sensitive => (Sensitivity::Sensitive, "local"),
+                ScanVerdict::Clean => (Sensitivity::Clean, "local_degraded"),
+                ScanVerdict::Undetermined => (Sensitivity::Undetermined, "undetermined"),
+            },
         }
-        None => match gov.detector.scan(prompt) {
-            ScanVerdict::Sensitive => (Sensitivity::Sensitive, "local"),
-            ScanVerdict::Clean => (Sensitivity::Clean, "local_degraded"),
-            ScanVerdict::Undetermined => (Sensitivity::Undetermined, "undetermined"),
-        },
     };
 
     // 4. Gate.
@@ -403,6 +412,7 @@ async fn govern_request(
         .into_iter()
         .map(|name| TargetScope {
             local: state.engine.target_locality(&name),
+            priced: state.engine.target_price(&name).is_some(),
             name,
         })
         .collect();
