@@ -176,10 +176,6 @@ impl RouterEngine {
             request.llm_request.model = route.config.default_model.clone();
         }
 
-        if request.llm_request.model.is_none() {
-            request.llm_request.model = route.config.default_model.clone();
-        }
-
         self.attach_features(route, &mut request).await;
 
         let outcome = match eligible {

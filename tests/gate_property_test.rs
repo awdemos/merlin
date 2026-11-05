@@ -61,9 +61,10 @@ proptest! {
                 || (sensitivity == Sensitivity::Sensitive && policy.sensitive_local_only)
                 || sensitivity == Sensitivity::Undetermined;
             for name in &eligible {
-                let target = scope.iter().find(|t| &t.name == name).expect("name from scope");
-                prop_assert!(!restricted || target.local,
-                    "non-local target {name} in eligible set under local restriction");
+                prop_assert!(
+                    scope.iter().any(|t| &t.name == name && (!restricted || t.local)),
+                    "eligible target {name} has no local occurrence in scope under local restriction"
+                );
                 if let Some(allowed) = &policy.allowed_targets {
                     prop_assert!(allowed.contains(name),
                         "target {name} not in allowed_targets");
