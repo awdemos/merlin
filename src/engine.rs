@@ -95,10 +95,77 @@ impl RouterEngine {
             .collect()
     }
 
-    pub async fn execute(
+    /// All target names reachable by a route: its declared targets plus
+    /// any targets the algorithm fixes internally (passthrough,
+    /// classifier). The gate scopes eligibility over exactly this set.
+    pub fn route_scope(&self, route_name: &str) -> Vec<String> {
+        let route = match self.routes.get(route_name) {
+            Some(route) => route,
+            None => return Vec::new(),
+        };
+        let mut names = route.config.targets.clone();
+        names.extend(route.config.algorithm.target_names());
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// True when the target's client runs on local infrastructure
+    /// (loopback/private-range base_url).
+    pub fn target_locality(&self, target_name: &str) -> bool {
+        self.config
+            .targets
+            .get(target_name)
+            .and_then(|t| self.config.clients.get(&t.client))
+            .map(|c| crate::governance::gate::host_is_local(&c.base_url))
+            .unwrap_or(false)
+    }
+
+    /// (price_input, price_output) in USD per 1M tokens, if priced.
+    pub fn target_price(&self, target_name: &str) -> Option<(f64, f64)> {
+        let target = self.config.targets.get(target_name)?;
+        Some((target.price_input?, target.price_output?))
+    }
+
+    /// Like [`RouterEngine::execute`], but restricted to `eligible` target
+    /// names (from the governance gate). `None` = no restriction (plain
+    /// execute). Dispatched targets are always a subset of the eligible
+    /// set: the candidate list is pre-filtered (honored by
+    /// passthrough/classifier), the selected target is verified
+    /// post-selection (fail-closed `policy_denied` on escape), and
+    /// fallbacks are filtered to the eligible set. A denial has no
+    /// dispatch, metrics, or reward side effects (sidecar feature
+    /// attachment may still run for `needs_features` algorithms).
+    pub async fn execute_governed(
+        &self,
+        route_name: &str,
+        request: Request,
+        eligible: Option<&[String]>,
+    ) -> anyhow::Result<LlmResponse> {
+        self.execute_inner(route_name, request, eligible).await
+    }
+
+    /// Governed variant of [`RouterEngine::decide`]; same eligible-set
+    /// guarantee and fail-closed denial semantics as
+    /// [`RouterEngine::execute_governed`].
+    pub async fn decide_governed(
+        &self,
+        route_name: &str,
+        request: Request,
+        eligible: Option<&[String]>,
+    ) -> anyhow::Result<RoutingOutcome> {
+        self.decide_inner(route_name, request, eligible).await
+    }
+
+    pub async fn execute(&self, route_name: &str, request: Request) -> anyhow::Result<LlmResponse> {
+        self.execute_inner(route_name, request, None).await
+    }
+
+    async fn execute_inner(
         &self,
         route_name: &str,
         mut request: Request,
+        eligible: Option<&[String]>,
     ) -> anyhow::Result<LlmResponse> {
         let route = self
             .routes
@@ -109,16 +176,24 @@ impl RouterEngine {
             request.llm_request.model = route.config.default_model.clone();
         }
 
-        let targets: Vec<TargetConfig> = route
-            .config
-            .targets
-            .iter()
-            .filter_map(|t| self.config.targets.get(t).cloned())
-            .collect();
+        if request.llm_request.model.is_none() {
+            request.llm_request.model = route.config.default_model.clone();
+        }
 
         self.attach_features(route, &mut request).await;
 
-        let outcome = route.algorithm.select(&request, &targets)?;
+        let outcome = match eligible {
+            Some(eligible) => self.select_governed(route, route_name, &request, eligible)?,
+            None => {
+                let targets: Vec<TargetConfig> = route
+                    .config
+                    .targets
+                    .iter()
+                    .filter_map(|t| self.config.targets.get(t).cloned())
+                    .collect();
+                route.algorithm.select(&request, &targets)?
+            }
+        };
         let selected = self.resolve_target(&outcome.selected)?;
         let fallbacks: Vec<TargetRef> = outcome
             .fallbacks
@@ -159,7 +234,16 @@ impl RouterEngine {
     pub async fn decide(
         &self,
         route_name: &str,
+        request: Request,
+    ) -> anyhow::Result<RoutingOutcome> {
+        self.decide_inner(route_name, request, None).await
+    }
+
+    async fn decide_inner(
+        &self,
+        route_name: &str,
         mut request: Request,
+        eligible: Option<&[String]>,
     ) -> anyhow::Result<RoutingOutcome> {
         let route = self
             .routes
@@ -168,17 +252,72 @@ impl RouterEngine {
         if request.llm_request.model.is_none() {
             request.llm_request.model = route.config.default_model.clone();
         }
-        let targets: Vec<TargetConfig> = route
-            .config
-            .targets
-            .iter()
-            .filter_map(|t| self.config.targets.get(t).cloned())
-            .collect();
         self.attach_features(route, &mut request).await;
-        let outcome = route.algorithm.select(&request, &targets)?;
+        let outcome = match eligible {
+            Some(eligible) => self.select_governed(route, route_name, &request, eligible)?,
+            None => {
+                let targets: Vec<TargetConfig> = route
+                    .config
+                    .targets
+                    .iter()
+                    .filter_map(|t| self.config.targets.get(t).cloned())
+                    .collect();
+                route.algorithm.select(&request, &targets)?
+            }
+        };
         Ok(RoutingOutcome {
             target: self.resolve_target(&outcome.selected)?,
             fallback_chain: outcome.fallbacks,
+        })
+    }
+
+    /// Governed selection: filter candidates to the eligible set, run the
+    /// algorithm, then enforce eligibility fail-closed — a selected target
+    /// outside the eligible set is a denial (before any dispatch side
+    /// effects) and fallbacks are restricted to the eligible set. Candidates
+    /// come from the route's declared targets only; algorithm-fixed targets
+    /// (passthrough, classifier) are validated by the post-selection check,
+    /// never admitted into the candidate list.
+    fn select_governed(
+        &self,
+        route: &Route,
+        route_name: &str,
+        request: &Request,
+        eligible: &[String],
+    ) -> anyhow::Result<crate::routing::AlgorithmOutcome> {
+        let eligible_set: std::collections::HashSet<&str> =
+            eligible.iter().map(String::as_str).collect();
+        let candidates: Vec<TargetConfig> = route
+            .config
+            .targets
+            .iter()
+            .filter(|t| eligible_set.contains(t.as_str()))
+            .filter_map(|t| self.config.targets.get(t).cloned())
+            .collect();
+        if candidates.is_empty() {
+            anyhow::bail!("policy_denied: no eligible targets in route {}", route_name);
+        }
+        let outcome = route.algorithm.select(request, &candidates)?;
+        // Fail-closed enforcement: arm-based algorithms select from their
+        // construction-time arm list and ignore the filtered candidate
+        // list, so verify the selection against the eligible set and drop
+        // ineligible fallbacks. A selection outside the eligible set is a
+        // denial, never a dispatch.
+        if !eligible_set.contains(outcome.selected.as_str()) {
+            anyhow::bail!(
+                "policy_denied: selected target '{}' outside eligible set",
+                outcome.selected
+            );
+        }
+        let fallbacks: Vec<String> = outcome
+            .fallbacks
+            .iter()
+            .filter(|name| eligible_set.contains(name.as_str()))
+            .cloned()
+            .collect();
+        Ok(crate::routing::AlgorithmOutcome {
+            selected: outcome.selected,
+            fallbacks,
         })
     }
 
