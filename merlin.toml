@@ -6,9 +6,9 @@ port = 7777
 
 [clients.ollama]
 format = "openai_chat"
-base_url = "http://localhost:11434/v1"
+base_url = "http://localhost:11434"
 api_key_env = "OLLAMA_API_KEY"
-max_retries = 1
+max_retries = 0
 
 [clients.openai]
 format = "openai_chat"
@@ -42,11 +42,11 @@ targets = ["qwen_ollama"]
 type = "passthrough"
 target = "qwen_ollama"
 
-[routes.passthrough]
-id = "passthrough"
+[routes.qwen_local]
+id = "qwen_local"
 targets = ["qwen_ollama"]
 
-[routes.passthrough.algorithm]
+[routes.qwen_local.algorithm]
 type = "passthrough"
 target = "qwen_ollama"
 
