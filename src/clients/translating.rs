@@ -69,8 +69,8 @@ impl TranslatingLlmClient {
 
     fn path(&self) -> &'static str {
         match self.format {
-            WireFormat::AnthropicMessages => "/messages",
-            _ => "/chat/completions",
+            WireFormat::AnthropicMessages => "/v1/messages",
+            _ => "/v1/chat/completions",
         }
     }
 }
@@ -98,7 +98,12 @@ impl LlmClient for TranslatingLlmClient {
             async move {
                 let req = client.post(url).json(&body);
                 let req = if let Some(key) = api_key {
-                    req.bearer_auth(key)
+                    match self.format {
+                        crate::protocol::WireFormat::AnthropicMessages => {
+                            req.header("x-api-key", key)
+                        }
+                        _ => req.bearer_auth(key),
+                    }
                 } else {
                     req
                 };
