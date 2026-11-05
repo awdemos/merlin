@@ -1703,6 +1703,19 @@ In `src/engine.rs`, add these methods to `impl RouterEngine` (after `decide`):
 
 Refactor `execute` and `decide` into inner functions taking `eligible: Option<&[String]>`:
 
+> **Implementation note (applied during execution):** the plan originally
+> assumed algorithms honor the `targets` argument to `select()`. In fact
+> ALL arm-based algorithms (epsilon_greedy, thompson, ucb, random,
+> contextual) select from their construction-time arm lists and ignore
+> the argument (verified in src/routing/*). Governance therefore
+> enforces eligibility fail-closed AFTER selection in a single shared
+> `select_governed` helper: candidates are pre-filtered (honored by
+> passthrough/classifier), a selected target outside the eligible set
+> bails `policy_denied` before any dispatch/metrics/reward side effects,
+> and fallbacks are filtered to the eligible set. `check_algorithm_scope`
+> from the original plan text was dropped as redundant. Tests pin the
+> invariant incl. a zero-upstream-requests assertion.
+
 Replace the body of `execute` (keep its signature) with:
 
 ```rust
