@@ -4,6 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
+vstd = "=0.0.0-2026-09-20-0158"
 axum = "0.7"
 hyper = { version = "1.0", features = ["full"] }
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
@@ -34,9 +35,18 @@ thiserror = "1.0"
 tracing-opentelemetry = "0.24"
 tokio-retry = "0.3"
 bytes = "1"
+regex = "1"
+sha2 = "0.10"
 
 [dev-dependencies]
 mockall = "0.11"
 tokio-test = "0.4"
 tempfile = "3.0"
 wiremock = "0.6"
+proptest = "1"
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_only)'] }
