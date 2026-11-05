@@ -190,6 +190,13 @@ impl Default for GovernanceConfig {
 
 Add price fields to `TargetConfig` (after `extra_body`):
 
+> **Implementation note (applied during execution):** `#[serde(default)]` on
+> `MerlinConfig` is kept only on `server`, `features`, and `governance` —
+> NOT on `clients`/`targets`/`routes` — so a typo'd `[governance]` section
+> fails loudly at startup instead of silently leaving the gate disabled.
+> `MerlinConfig::validate()` additionally rejects a non-finite or
+> out-of-range (not in 0.0..=1.0) `sensitivity_threshold`.
+
 ```rust
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_body: Option<crate::protocol::tools::ExtraBody>,
