@@ -287,6 +287,9 @@ Notes:
   responses are not accounted (v1 limitation).
 - Denials are counted in `merlin_governance_denials_total{code}` and
   include an `error.conflicts` list explaining the denial.
+- Governance denials use a string `error.code` (e.g. `"policy_denied"`);
+  legacy error responses (upstream failures) use a numeric `code` — check
+  the shape before reading it.
 - See `examples/governance.toml` for a full config.
 
 ---
