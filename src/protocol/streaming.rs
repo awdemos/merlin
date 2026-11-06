@@ -23,6 +23,9 @@ pub enum LlmResponseChunk {
 /// A single-consumption stream of response chunks.
 pub struct LlmResponseStream {
     pub inner: BoxStream,
+    /// Target that produced this stream, set by the engine so callers can
+    /// price/account without re-resolving the route selection.
+    pub selected_target: Option<String>,
 }
 
 impl std::fmt::Debug for LlmResponseStream {

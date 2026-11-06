@@ -148,6 +148,7 @@ impl LlmClient for TranslatingLlmClient {
 
             Ok(LlmResponse::Stream(crate::protocol::LlmResponseStream {
                 inner: Box::pin(events),
+                selected_target: None,
             }))
         } else {
             let body: serde_json::Value = response.json().await?;

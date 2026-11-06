@@ -464,6 +464,76 @@ async fn charge_spend(state: &ServerState, ctx: Option<&GovContext>, agg: &AggLl
     }
 }
 
+/// Best-effort async charge. Spawns on the current runtime; if none is
+/// available (e.g. shutdown), the charge is skipped rather than blocking.
+fn spawn_charge(store: Arc<dyn Store>, app_id: String, cost: f64) {
+    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(async move {
+            if let Err(e) = store.add_spend(&app_id, &day, cost).await {
+                tracing::warn!("failed to charge stream spend for app {app_id}: {e}");
+            }
+        });
+    }
+}
+
+/// Accumulates usage from a streamed response and charges the app's daily
+/// budget when the stream ends (normally or via disconnect).
+struct StreamSpendGuard {
+    store: Arc<dyn Store>,
+    app_id: String,
+    prices: (f64, f64),
+    usage: crate::protocol::Usage,
+    charged: bool,
+}
+
+impl StreamSpendGuard {
+    fn new(
+        state: &ServerState,
+        ctx: &GovContext,
+        target: &str,
+    ) -> Option<Arc<std::sync::Mutex<Self>>> {
+        // Charge only when the app is capped and the target is priced (the
+        // gate already confines capped apps to priced targets).
+        ctx.app.policy.max_spend_usd_per_day?;
+        let prices = state.engine.target_price(target)?;
+        let store = state.governance.as_ref()?.store.clone();
+        Some(Arc::new(std::sync::Mutex::new(Self {
+            store,
+            app_id: ctx.app.id.clone(),
+            prices,
+            usage: Default::default(),
+            charged: false,
+        })))
+    }
+
+    fn cost(&self) -> f64 {
+        (self.usage.prompt_tokens as f64) * self.prices.0 / 1_000_000.0
+            + (self.usage.completion_tokens as f64) * self.prices.1 / 1_000_000.0
+    }
+
+    fn charge(guard: &Arc<std::sync::Mutex<Self>>) {
+        // Poison-proof: a panicking inspect callback must not wedge accounting.
+        let mut g = guard.lock().unwrap_or_else(|e| e.into_inner());
+        if g.charged {
+            return;
+        }
+        g.charged = true;
+        spawn_charge(g.store.clone(), g.app_id.clone(), g.cost());
+    }
+}
+
+impl Drop for StreamSpendGuard {
+    fn drop(&mut self) {
+        // Sole owner at this point (last Arc ref dropped): no lock needed.
+        if self.charged {
+            return;
+        }
+        self.charged = true;
+        spawn_charge(self.store.clone(), self.app_id.clone(), self.cost());
+    }
+}
+
 /// Charge spend and attach the governance trace to an aggregate response.
 async fn aggregate_response(
     state: &ServerState,
@@ -539,8 +609,11 @@ async fn openai_chat_completions(
         }
         Ok(LlmResponse::Stream(s)) => {
             if stream {
-                // v1: SSE passthrough is not spend-accounted (documented limitation).
-                sse_stream(s, &codec).into_response()
+                let guard = match (&gov, s.selected_target.as_deref()) {
+                    (Some(g), Some(target)) => StreamSpendGuard::new(&state, g, target),
+                    _ => None,
+                };
+                sse_stream(s, &codec, guard).into_response()
             } else {
                 match crate::engine::aggregate_stream(s).await {
                     Ok(agg) => {
@@ -594,8 +667,11 @@ async fn anthropic_messages(
         }
         Ok(LlmResponse::Stream(s)) => {
             if stream {
-                // v1: SSE passthrough is not spend-accounted (documented limitation).
-                sse_stream(s, &codec).into_response()
+                let guard = match (&gov, s.selected_target.as_deref()) {
+                    (Some(g), Some(target)) => StreamSpendGuard::new(&state, g, target),
+                    _ => None,
+                };
+                sse_stream(s, &codec, guard).into_response()
             } else {
                 match crate::engine::aggregate_stream(s).await {
                     Ok(agg) => {
@@ -770,10 +846,28 @@ fn encode_stop_reason(reason: crate::protocol::StopReason) -> serde_json::Value 
 fn sse_stream(
     stream: crate::protocol::LlmResponseStream,
     _codec: &dyn WireCodec,
+    guard: Option<Arc<std::sync::Mutex<StreamSpendGuard>>>,
 ) -> Sse<impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>
 {
     let events = stream
         .inner
+        .inspect(move |event: &LlmResponseStreamEvent| {
+            if let Some(g) = &guard {
+                {
+                    let mut g = g.lock().unwrap_or_else(|e| e.into_inner());
+                    if let LlmResponseChunk::Usage { usage } = &event.chunk {
+                        g.usage = *usage;
+                    }
+                    // Event-level usage wins, mirroring aggregate_stream.
+                    if let Some(u) = event.usage {
+                        g.usage = u;
+                    }
+                }
+                if matches!(event.chunk, LlmResponseChunk::Done) {
+                    StreamSpendGuard::charge(g);
+                }
+            }
+        })
         .filter_map(move |event: LlmResponseStreamEvent| {
             let data = match event.chunk {
                 LlmResponseChunk::ContentDelta {

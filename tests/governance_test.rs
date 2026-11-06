@@ -766,3 +766,193 @@ async fn spend_is_charged_per_call() {
         "spent after 2 calls: {spent}"
     );
 }
+
+#[tokio::test]
+async fn streamed_responses_are_spend_accounted() {
+    use tower::ServiceExt;
+    // Upstream speaks OpenAI SSE: one content delta, one usage-bearing
+    // chunk (prompt=10, completion=5), then [DONE]. The usage chunk has
+    // no choices, so it surfaces only as event-level usage — exactly the
+    // signal the spend guard accumulates.
+    let sse_body = concat!(
+        "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":0,",
+        "\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},",
+        "\"finish_reason\":null}]}\n",
+        "\n",
+        "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":0,",
+        "\"model\":\"m\",\"choices\":[],",
+        "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n",
+        "\n",
+        "data: [DONE]\n",
+        "\n",
+    );
+    let mock = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse_body),
+        )
+        .mount(&mock)
+        .await;
+
+    let config = passthrough_config(mock.uri(), Some((10.0, 20.0)));
+    let engine = RouterEngine::new(config).unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut app = App::new("myapp", "My App");
+    app.policy = AppPolicy {
+        max_spend_usd_per_day: Some(1.0),
+        ..Default::default()
+    };
+    store.put_app(&app).await.unwrap();
+    let raw = merlin::governance::apps::mint_token();
+    let hash = merlin::governance::apps::hash_token(&raw);
+    store.put_token("myapp", "tid-1", &hash).await.unwrap();
+    let gov = Governance {
+        config: gov_config(),
+        store: store.clone(),
+        detector: Detector::new(),
+    };
+    let router = create_app_with_governance(Arc::new(engine), gov);
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {raw}"))
+        .body(axum::body::Body::from(
+            serde_json::json!({
+                "model": "default",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        content_type.starts_with("text/event-stream"),
+        "content-type: {content_type}"
+    );
+
+    // Consume the stream to the end; the guard charges on Done (and would
+    // charge accumulated usage on Drop for a disconnect).
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(text.contains("data:"), "sse body: {text}");
+
+    // The charge is spawned on the runtime; poll the store until it lands.
+    let spent = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let s = store.spend("myapp", &today).await.unwrap();
+            if (s - 0.0002).abs() < 1e-9 {
+                break s;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("spend recorded within 2s");
+    assert!((spent - 0.0002).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn stream_disconnect_still_charges() {
+    use tower::ServiceExt;
+    // The usage-bearing chunk comes FIRST: Progress chunks are swallowed
+    // by filter_map's internal loop, so a client that disconnects after
+    // the first content frame has already pushed usage through the guard.
+    // No `Done` arrives on disconnect — the Drop path must charge it.
+    let sse_body = concat!(
+        "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":0,",
+        "\"model\":\"m\",\"choices\":[],",
+        "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n",
+        "\n",
+        "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":0,",
+        "\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},",
+        "\"finish_reason\":null}]}\n",
+        "\n",
+        "data: [DONE]\n",
+        "\n",
+    );
+    let mock = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse_body),
+        )
+        .mount(&mock)
+        .await;
+
+    let config = passthrough_config(mock.uri(), Some((10.0, 20.0)));
+    let engine = RouterEngine::new(config).unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut app = App::new("myapp", "My App");
+    app.policy = AppPolicy {
+        max_spend_usd_per_day: Some(1.0),
+        ..Default::default()
+    };
+    store.put_app(&app).await.unwrap();
+    let raw = merlin::governance::apps::mint_token();
+    let hash = merlin::governance::apps::hash_token(&raw);
+    store.put_token("myapp", "tid-1", &hash).await.unwrap();
+    let gov = Governance {
+        config: gov_config(),
+        store: store.clone(),
+        detector: Detector::new(),
+    };
+    let router = create_app_with_governance(Arc::new(engine), gov);
+
+    let request = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {raw}"))
+        .body(axum::body::Body::from(
+            serde_json::json!({
+                "model": "default",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    // Read exactly one frame, then disconnect mid-stream.
+    let mut body = Box::pin(response.into_body());
+    use axum::body::HttpBody;
+    let first = futures::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await;
+    assert!(
+        matches!(first, Some(Ok(_))),
+        "first frame delivered: {first:?}"
+    );
+    drop(body);
+
+    // The drop-guard must charge the accumulated usage without `Done`.
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let spent = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let s = store.spend("myapp", &today).await.unwrap();
+            if s > 0.0 {
+                break s;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("drop charge recorded within 2s");
+    assert!(spent > 0.0);
+}

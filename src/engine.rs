@@ -461,8 +461,10 @@ fn stamp(resp: &mut LlmResponse, route_name: &str, serving: &TargetRef, fallback
         LlmResponse::Aggregate(agg) => {
             agg.preservation = preservation;
         }
-        LlmResponse::Stream(_) => {
-            // Stream preservation not yet attached.
+        LlmResponse::Stream(s) => {
+            // An established stream always belongs to the serving target
+            // (fallbacks engage only when stream creation fails).
+            s.selected_target = Some(serving.name.clone());
         }
     }
 }

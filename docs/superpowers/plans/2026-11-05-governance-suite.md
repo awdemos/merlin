@@ -3044,7 +3044,8 @@ git add README.md examples/governance.toml && git commit -m "docs: governance su
 
 - **Spec coverage:** detect+sidecar fallback (Tasks 2, 8), Redis store + in-memory test impl (Tasks 3–4), gate fail-closed semantics (Task 5), property test (Task 6), eligible-only bandit selection + algorithm-escape guard (Task 7), auth/quota/gate/trace/denial metrics (Task 8), CLI (Task 9), config surface + pricing (Task 1). All spec sections map to tasks.
 - **Type consistency:** `AppPolicy`/`LocalityPolicy`/`App`/`Store`/`MemoryStore`/`RedisStore`/`mint_token`/`hash_token` (Task 3) are used with identical signatures in Tasks 4–9. `evaluate(policy, sensitivity, scope) -> Result<Vec<String>, Denial>` and `Denial { code, conflicts }` are used identically in Tasks 5, 6, 8. `execute_governed(route, request, Option<&[String]>)` / `decide_governed` same in Tasks 7, 8. `Governance { config, store, detector }` and `create_app_with_governance` identical in Tasks 8–9 tests.
-- **Known v1 limitations (documented in spec, out of scope):** spend is charged on aggregate responses only (SSE passthrough uncharged); no payload redaction; no admin HTTP API.
+- **Known v1 limitations (documented in spec, out of scope):** no payload redaction; no admin HTTP API.
+- **Streamed spend accounting:** implemented post-review via a drop-guard — usage events accumulate per chunk and the app's daily budget is charged when the stream ends (normally or via disconnect); `merlin_trace` remains aggregate-only by design.
 - **Task 5 execution notes:** three plan defects were fixed during
   execution — `host_is_local` gained bracket-aware IPv6 extraction (the
   reference parser failed on `[::1]` against its own test), denial wording

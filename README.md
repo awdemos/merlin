@@ -283,8 +283,10 @@ applies the strictest policy; routing-side classification stays fail-open as bef
 Notes:
 - Apps with a daily spend cap can only route to targets that declare
   `price_input`/`price_output` (fail-closed).
-- Spend accounting charges aggregate responses; streamed (`stream: true`)
-  responses are not accounted (v1 limitation).
+- Spend accounting charges aggregate and streamed responses (stream usage
+  is accumulated from usage events and charged when the stream ends;
+  `merlin_trace` remains aggregate-only by design — injecting non-standard
+  events would break OpenAI SSE clients).
 - Denials are counted in `merlin_governance_denials_total{code}` and
   include an `error.conflicts` list explaining the denial.
 - Governance denials use a string `error.code` (e.g. `"policy_denied"`);

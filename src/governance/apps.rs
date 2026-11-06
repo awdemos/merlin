@@ -34,7 +34,7 @@ pub struct AppPolicy {
     /// Requests per minute; `None` = unlimited.
     pub max_rpm: Option<u32>,
     /// Daily spend cap in USD; `None` = unlimited. Charged on aggregate
-    /// responses; streamed responses are not accounted (v1).
+    /// responses and, via accumulated usage events, on streamed responses.
     pub max_spend_usd_per_day: Option<f64>,
     /// Raise-only: sensitive requests are restricted to local targets.
     pub sensitive_local_only: bool,
